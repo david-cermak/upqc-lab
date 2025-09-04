@@ -1,0 +1,9 @@
+[submodule "impl/kyber"]
+	path = impl/kyber
+	url = https://github.com/pq-crystals/kyber.git
+[submodule "impl/kybesp32"]
+	path = impl/kybesp32
+	url = https://github.com/fsegatz/kybesp32.git
+[submodule "impl/liboqs"]
+	path = impl/liboqs
+	url = https://github.com/open-quantum-safe/liboqs.git
