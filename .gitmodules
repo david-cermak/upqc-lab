@@ -7,3 +7,6 @@
 [submodule "impl/liboqs"]
 	path = impl/liboqs
 	url = https://github.com/open-quantum-safe/liboqs.git
+[submodule "impl/PQClean"]
+	path = impl/PQClean
+	url = https://github.com/PQClean/PQClean.git
