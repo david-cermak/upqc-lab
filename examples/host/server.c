@@ -5,6 +5,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include "crypto_backend.h"
 
 #define PORT 3333
 #define BUFFER_SIZE 1024
@@ -13,7 +14,6 @@ int main() {
     int server_fd, client_fd;
     struct sockaddr_in server_addr, client_addr;
     socklen_t client_len = sizeof(client_addr);
-    char buffer[BUFFER_SIZE];
     int opt = 1;
 
     // Create socket
@@ -58,36 +58,70 @@ int main() {
     printf("Client connected from %s:%d\n", 
            inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
 
-    // Send welcome message
-    const char *welcome_msg = "Welcome to the PQC Lab Server!\n";
-    send(client_fd, welcome_msg, strlen(welcome_msg), 0);
+    // Initialize crypto context
+    crypto_context_t crypto_ctx;
+    crypto_error_t err = crypto_init(&crypto_ctx, CRYPTO_BACKEND_CUSTOM_PQC, client_fd);
+    if (err != CRYPTO_SUCCESS) {
+        printf("Crypto initialization failed: %s\n", crypto_error_string(err));
+        close(client_fd);
+        close(server_fd);
+        return EXIT_FAILURE;
+    }
 
-    // Echo loop
+    // Perform ML-KEM-512 handshake
+    printf("Performing ML-KEM-512 handshake...\n");
+    err = crypto_handshake_server(&crypto_ctx);
+    if (err != CRYPTO_SUCCESS) {
+        printf("Handshake failed: %s\n", crypto_error_string(err));
+        crypto_cleanup(&crypto_ctx);
+        close(client_fd);
+        close(server_fd);
+        return EXIT_FAILURE;
+    }
+    printf("Handshake completed successfully!\n");
+
+    // Send welcome message
+    const char *welcome_msg = "Welcome to the PQC Lab Server! (Encrypted)\n";
+    err = crypto_send_message(&crypto_ctx, (const uint8_t *)welcome_msg, strlen(welcome_msg));
+    if (err != CRYPTO_SUCCESS) {
+        printf("Failed to send welcome message: %s\n", crypto_error_string(err));
+        crypto_cleanup(&crypto_ctx);
+        close(client_fd);
+        close(server_fd);
+        return EXIT_FAILURE;
+    }
+
+    // Encrypted echo loop
     while (1) {
-        memset(buffer, 0, BUFFER_SIZE);
-        int bytes_received = recv(client_fd, buffer, BUFFER_SIZE - 1, 0);
+        uint8_t encrypted_buffer[BUFFER_SIZE];
+        size_t received_len;
         
-        if (bytes_received <= 0) {
-            printf("Client disconnected\n");
+        err = crypto_recv_message(&crypto_ctx, encrypted_buffer, &received_len);
+        if (err != CRYPTO_SUCCESS) {
+            printf("Failed to receive message: %s\n", crypto_error_string(err));
             break;
         }
 
-        printf("Received: %s", buffer);
+        // Null-terminate for printing
+        encrypted_buffer[received_len] = '\0';
+        printf("Received (encrypted): %s", (char *)encrypted_buffer);
 
         // Echo back the message
-        if (send(client_fd, buffer, bytes_received, 0) < 0) {
-            perror("Send failed");
+        err = crypto_send_message(&crypto_ctx, encrypted_buffer, received_len);
+        if (err != CRYPTO_SUCCESS) {
+            printf("Failed to send echo: %s\n", crypto_error_string(err));
             break;
         }
 
         // Check for exit command
-        if (strncmp(buffer, "exit", 4) == 0) {
+        if (strncmp((char *)encrypted_buffer, "exit", 4) == 0) {
             printf("Client requested exit\n");
             break;
         }
     }
 
     // Cleanup
+    crypto_cleanup(&crypto_ctx);
     close(client_fd);
     close(server_fd);
     printf("Server shutdown\n");

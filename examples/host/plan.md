@@ -142,6 +142,35 @@ int crypto_cleanup(crypto_context_t *ctx);
 4. **Maintainability**: Changes to crypto implementation don't affect application logic
 5. **Future-Proof**: Ready for TLS 1.3 with PQC extensions when available
 
+### Phase 2A: Custom PQC Backend Implementation ✅ **COMPLETED**
+**Objective**: Implement custom PQC backend with ML-KEM-512 and abstraction interface
+
+**Tasks**:
+- [x] **Create crypto_backend.h abstraction interface**
+  - Define crypto_context_t structure
+  - Define backend types (CUSTOM_PQC, MBEDTLS, OPENSSL)
+  - Define core interface functions
+  - Support for future TLS backends
+
+- [x] **Implement crypto_backend_custom_pqc.c**
+  - ML-KEM-512 key generation, encapsulation, decapsulation
+  - AES-256-GCM symmetric encryption using HKDF-derived keys
+  - Custom protocol with message types and sequence numbers
+  - Secure memory management and cleanup
+
+- [x] **Update server.c and client.c**
+  - Replace plain text communication with crypto abstraction
+  - Implement ML-KEM-512 handshake on both sides
+  - Encrypted message exchange with proper error handling
+  - Maintain same user interface
+
+- [x] **Update CMakeLists.txt**
+  - Add OpenSSL dependency for AES encryption
+  - Include new source files in build
+  - Link against OpenSSL libraries
+
+**Status**: ✅ Successfully implemented custom PQC backend with ML-KEM-512. The abstraction interface allows future migration to TLS backends without changing application code. All cryptographic operations use production-ready algorithms (ML-KEM-512 + AES-256-GCM).
+
 ### Phase 2: Cryptographic Protocol Design
 **Objective**: Design secure key exchange protocol over TCP
 
