@@ -9,7 +9,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra")
 
 # Configure liboqs build options
-set(OQS_MINIMAL_BUILD "ML-KEM-512" CACHE STRING "Only build ML-KEM-512 algorithm")
+set(OQS_MINIMAL_BUILD "" CACHE STRING "Build all algorithms")
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build static library")
 set(OQS_DIST_BUILD OFF CACHE BOOL "Disable platform-specific optimizations for portability")
 set(OQS_BUILD_ONLY_LIB ON CACHE BOOL "Build only liboqs library, no tests or examples")

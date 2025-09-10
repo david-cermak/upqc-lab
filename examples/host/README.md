@@ -1,6 +1,14 @@
 # PQC Lab TCP Example
 
-Simple TCP server and client application for testing post-quantum cryptography implementations.
+A complete TCP server and client application demonstrating post-quantum cryptography (PQC) with ML-KEM-512 key exchange and AES-256-GCM authenticated encryption.
+
+## Features
+
+- **Post-Quantum Key Exchange**: ML-KEM-512 (Kyber) for secure key establishment
+- **Authenticated Encryption**: AES-256-GCM for message confidentiality and integrity
+- **Key Derivation**: HKDF (HMAC-based Key Derivation Function) for symmetric key generation
+- **Sequence Numbers**: Protection against replay attacks
+- **Bidirectional Communication**: Full duplex encrypted messaging
 
 ## Build
 
@@ -26,6 +34,77 @@ make
 3. Type messages in the client terminal. The server will echo them back.
 4. Type `exit` to quit.
 
-## Next Steps
+## Example Output
 
-This boilerplate will be extended with ML-KEM-512 (Kyber) post-quantum cryptography for secure key exchange.
+### Server Output
+```
+Server listening on port 3333...
+Client connected from 127.0.0.1:37124
+Performing ML-KEM-512 handshake...
+Handshake completed successfully!
+Received (encrypted): asdf
+Echo: asdf
+Received (encrypted): exit
+```
+
+### Client Output
+```
+Connected to server on port 3333
+Performing ML-KEM-512 handshake...
+Handshake completed successfully!
+Server: Welcome to the PQC Lab Server! (Encrypted)
+Type messages to send to server (type 'exit' to quit):
+> asdf
+Echo: asdf
+> exit
+Disconnecting...
+Client shutdown
+```
+
+## Technical Implementation
+
+### Cryptographic Components
+
+1. **ML-KEM-512**: Post-quantum key encapsulation mechanism
+   - Public key: 800 bytes
+   - Secret key: 1632 bytes
+   - Ciphertext: 768 bytes
+   - Shared secret: 32 bytes
+
+2. **AES-256-GCM**: Authenticated encryption
+   - Key size: 256 bits (32 bytes)
+   - IV size: 96 bits (12 bytes)
+   - Tag size: 128 bits (16 bytes)
+
+3. **HKDF**: Key derivation function
+   - Uses SHA-256 as the underlying hash function
+   - Derives AES keys from ML-KEM shared secrets
+
+### Message Format
+
+Each encrypted message follows the structure:
+```
+[IV (12 bytes)][Encrypted Data][Authentication Tag (16 bytes)]
+```
+
+### Security Features
+
+- **Forward Secrecy**: Each session uses fresh ML-KEM key pairs
+- **Authentication**: All messages are authenticated using AES-GCM
+- **Replay Protection**: Sequence numbers prevent message replay attacks
+- **Post-Quantum Security**: Resistant to attacks from quantum computers
+
+## Dependencies
+
+- **OpenSSL 3.0+**: For AES-GCM and HKDF
+- **liboqs**: For ML-KEM-512 implementation
+- **CMake**: Build system
+
+## Architecture
+
+The implementation uses a modular crypto backend system:
+- `crypto_backend_custom_pqc.c`: Custom PQC implementation with ML-KEM-512
+- `crypto_backend.h`: Common interface for different crypto backends
+- `server.c` / `client.c`: Application logic
+
+This design allows for easy integration of different post-quantum algorithms and cryptographic backends.

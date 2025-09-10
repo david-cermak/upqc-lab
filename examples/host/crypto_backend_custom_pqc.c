@@ -38,6 +38,7 @@ typedef struct {
     uint8_t *shared_secret;
     uint8_t *aes_key;
     uint32_t sequence_number;
+    uint32_t expected_sequence;
 } custom_pqc_ctx_t;
 
 // Helper function to send protocol message
@@ -141,8 +142,16 @@ static crypto_error_t derive_aes_key(const uint8_t *shared_secret, size_t shared
     EVP_KDF_free(kdf);
     
     if (ret <= 0) {
+        printf("DEBUG: HKDF key derivation failed\n");
         return CRYPTO_ERROR_INIT_FAILED;
     }
+    
+    printf("DEBUG: HKDF key derivation successful\n");
+    printf("DEBUG: Derived AES key (first 8 bytes): ");
+    for (int i = 0; i < 8 && i < AES_KEY_SIZE; i++) {
+        printf("%02x ", aes_key[i]);
+    }
+    printf("\n");
     
     return CRYPTO_SUCCESS;
 }
@@ -150,74 +159,103 @@ static crypto_error_t derive_aes_key(const uint8_t *shared_secret, size_t shared
 // Encrypt data with AES-256-GCM
 static crypto_error_t encrypt_data(const uint8_t *aes_key, const uint8_t *plaintext, size_t plaintext_len,
                                   uint8_t *ciphertext, size_t *ciphertext_len, uint32_t sequence_number) {
+    printf("DEBUG: Starting encryption - plaintext_len=%zu, sequence_number=%u\n", plaintext_len, sequence_number);
+    
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
     if (ctx == NULL) {
+        printf("DEBUG: Failed to create EVP_CIPHER_CTX\n");
         return CRYPTO_ERROR_ENCRYPT_FAILED;
     }
     
     // Generate random IV
     uint8_t iv[AES_IV_SIZE];
     if (RAND_bytes(iv, AES_IV_SIZE) != 1) {
+        printf("DEBUG: Failed to generate random IV\n");
         EVP_CIPHER_CTX_free(ctx);
         return CRYPTO_ERROR_ENCRYPT_FAILED;
     }
+    printf("DEBUG: Generated IV successfully\n");
+    printf("DEBUG: IV (first 4 bytes): ");
+    for (int i = 0; i < 4 && i < AES_IV_SIZE; i++) {
+        printf("%02x ", iv[i]);
+    }
+    printf("\n");
     
     // Initialize encryption
     if (EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, aes_key, iv) != 1) {
+        printf("DEBUG: Failed to initialize encryption\n");
         EVP_CIPHER_CTX_free(ctx);
         return CRYPTO_ERROR_ENCRYPT_FAILED;
     }
+    printf("DEBUG: Initialized encryption successfully\n");
     
-    // Set additional authenticated data (sequence number + timestamp)
-    uint8_t aad[SEQUENCE_SIZE + TIMESTAMP_SIZE];
+    // Set additional authenticated data (sequence number only)
+    uint8_t aad[SEQUENCE_SIZE];
     uint32_t net_seq = htonl(sequence_number);
-    uint64_t timestamp = (uint64_t)time(NULL);
-    // Convert to network byte order manually
-    timestamp = ((timestamp & 0xFF00000000000000ULL) >> 56) |
-                ((timestamp & 0x00FF000000000000ULL) >> 40) |
-                ((timestamp & 0x0000FF0000000000ULL) >> 24) |
-                ((timestamp & 0x000000FF00000000ULL) >> 8)  |
-                ((timestamp & 0x00000000FF000000ULL) << 8)  |
-                ((timestamp & 0x0000000000FF0000ULL) << 24) |
-                ((timestamp & 0x000000000000FF00ULL) << 40) |
-                ((timestamp & 0x00000000000000FFULL) << 56);
     memcpy(aad, &net_seq, SEQUENCE_SIZE);
-    memcpy(aad + SEQUENCE_SIZE, &timestamp, TIMESTAMP_SIZE);
     
-    if (EVP_EncryptUpdate(ctx, NULL, (int*)ciphertext_len, aad, SEQUENCE_SIZE + TIMESTAMP_SIZE) != 1) {
+    printf("DEBUG: Setting AAD (sequence number only) - sequence_number=%u, net_seq=0x%08x\n", sequence_number, net_seq);
+    if (EVP_EncryptUpdate(ctx, NULL, (int*)ciphertext_len, aad, SEQUENCE_SIZE) != 1) {
+        printf("DEBUG: Failed to set AAD\n");
         EVP_CIPHER_CTX_free(ctx);
         return CRYPTO_ERROR_ENCRYPT_FAILED;
     }
     
     // Encrypt plaintext
     int len;
+    printf("DEBUG: Encrypting plaintext\n");
     if (EVP_EncryptUpdate(ctx, ciphertext, &len, plaintext, (int)plaintext_len) != 1) {
+        printf("DEBUG: Failed to encrypt plaintext\n");
         EVP_CIPHER_CTX_free(ctx);
         return CRYPTO_ERROR_ENCRYPT_FAILED;
     }
     *ciphertext_len = len;
+    printf("DEBUG: Encrypted %d bytes\n", len);
     
     // Finalize encryption
+    printf("DEBUG: Finalizing encryption\n");
     if (EVP_EncryptFinal_ex(ctx, ciphertext + len, &len) != 1) {
+        printf("DEBUG: Failed to finalize encryption\n");
         EVP_CIPHER_CTX_free(ctx);
         return CRYPTO_ERROR_ENCRYPT_FAILED;
     }
     *ciphertext_len += len;
     
     // Get authentication tag
+    printf("DEBUG: Getting authentication tag\n");
     uint8_t *tag = ciphertext + *ciphertext_len;
     if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, AES_TAG_SIZE, tag) != 1) {
+        printf("DEBUG: Failed to get authentication tag\n");
         EVP_CIPHER_CTX_free(ctx);
         return CRYPTO_ERROR_ENCRYPT_FAILED;
     }
     *ciphertext_len += AES_TAG_SIZE;
+    printf("DEBUG: Got authentication tag, total ciphertext_len=%zu\n", *ciphertext_len);
+    printf("DEBUG: Auth tag (first 4 bytes): ");
+    for (int i = 0; i < 4 && i < AES_TAG_SIZE; i++) {
+        printf("%02x ", tag[i]);
+    }
+    printf("\n");
     
     EVP_CIPHER_CTX_free(ctx);
     
     // Prepend IV to ciphertext
+    printf("DEBUG: Prepending IV to ciphertext\n");
+    printf("DEBUG: Before memmove - ciphertext_len=%zu, tag at offset %zu\n", *ciphertext_len, *ciphertext_len - AES_TAG_SIZE);
+    
+    // Save the tag before memmove
+    uint8_t saved_tag[AES_TAG_SIZE];
+    memcpy(saved_tag, ciphertext + *ciphertext_len - AES_TAG_SIZE, AES_TAG_SIZE);
+    
+    // Move encrypted data (without tag) to make room for IV
     memmove(ciphertext + AES_IV_SIZE, ciphertext, *ciphertext_len - AES_TAG_SIZE);
+    // Copy IV to the beginning
     memcpy(ciphertext, iv, AES_IV_SIZE);
+    // Restore the tag at the end
+    memcpy(ciphertext + *ciphertext_len - AES_TAG_SIZE + AES_IV_SIZE, saved_tag, AES_TAG_SIZE);
     *ciphertext_len += AES_IV_SIZE;
+    printf("DEBUG: After memmove - ciphertext_len=%zu, tag should be at offset %zu\n", *ciphertext_len, *ciphertext_len - AES_TAG_SIZE);
+    printf("DEBUG: Encryption completed successfully, final ciphertext_len=%zu\n", *ciphertext_len);
     
     return CRYPTO_SUCCESS;
 }
@@ -225,12 +263,16 @@ static crypto_error_t encrypt_data(const uint8_t *aes_key, const uint8_t *plaint
 // Decrypt data with AES-256-GCM
 static crypto_error_t decrypt_data(const uint8_t *aes_key, const uint8_t *ciphertext, size_t ciphertext_len,
                                   uint8_t *plaintext, size_t *plaintext_len, uint32_t expected_sequence) {
+    printf("DEBUG: Starting decryption - ciphertext_len=%zu, expected_sequence=%u\n", ciphertext_len, expected_sequence);
+    
     if (ciphertext_len < AES_IV_SIZE + AES_TAG_SIZE) {
+        printf("DEBUG: Ciphertext too short: %zu < %d\n", ciphertext_len, AES_IV_SIZE + AES_TAG_SIZE);
         return CRYPTO_ERROR_DECRYPT_FAILED;
     }
     
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
     if (ctx == NULL) {
+        printf("DEBUG: Failed to create EVP_CIPHER_CTX for decryption\n");
         return CRYPTO_ERROR_DECRYPT_FAILED;
     }
     
@@ -240,53 +282,66 @@ static crypto_error_t decrypt_data(const uint8_t *aes_key, const uint8_t *cipher
     const uint8_t *encrypted_data = ciphertext + AES_IV_SIZE;
     size_t encrypted_len = ciphertext_len - AES_IV_SIZE - AES_TAG_SIZE;
     
+    printf("DEBUG: Extracted IV, tag, encrypted_len=%zu\n", encrypted_len);
+    printf("DEBUG: Extracted IV (first 4 bytes): ");
+    for (int i = 0; i < 4 && i < AES_IV_SIZE; i++) {
+        printf("%02x ", iv[i]);
+    }
+    printf("\n");
+    
     // Initialize decryption
     if (EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, aes_key, iv) != 1) {
+        printf("DEBUG: Failed to initialize decryption\n");
         EVP_CIPHER_CTX_free(ctx);
         return CRYPTO_ERROR_DECRYPT_FAILED;
     }
+    printf("DEBUG: Initialized decryption successfully\n");
     
-    // Set additional authenticated data
-    uint8_t aad[SEQUENCE_SIZE + TIMESTAMP_SIZE];
+    // Set additional authenticated data (sequence number only)
+    uint8_t aad[SEQUENCE_SIZE];
     uint32_t net_seq = htonl(expected_sequence);
-    uint64_t timestamp = (uint64_t)time(NULL);
-    // Convert to network byte order manually
-    timestamp = ((timestamp & 0xFF00000000000000ULL) >> 56) |
-                ((timestamp & 0x00FF000000000000ULL) >> 40) |
-                ((timestamp & 0x0000FF0000000000ULL) >> 24) |
-                ((timestamp & 0x000000FF00000000ULL) >> 8)  |
-                ((timestamp & 0x00000000FF000000ULL) << 8)  |
-                ((timestamp & 0x0000000000FF0000ULL) << 24) |
-                ((timestamp & 0x000000000000FF00ULL) << 40) |
-                ((timestamp & 0x00000000000000FFULL) << 56);
     memcpy(aad, &net_seq, SEQUENCE_SIZE);
-    memcpy(aad + SEQUENCE_SIZE, &timestamp, TIMESTAMP_SIZE);
     
+    printf("DEBUG: Setting AAD for decryption (sequence number only) - expected_sequence=%u, net_seq=0x%08x\n", expected_sequence, net_seq);
     int len;
-    if (EVP_DecryptUpdate(ctx, NULL, &len, aad, SEQUENCE_SIZE + TIMESTAMP_SIZE) != 1) {
+    if (EVP_DecryptUpdate(ctx, NULL, &len, aad, SEQUENCE_SIZE) != 1) {
+        printf("DEBUG: Failed to set AAD for decryption\n");
         EVP_CIPHER_CTX_free(ctx);
         return CRYPTO_ERROR_DECRYPT_FAILED;
     }
     
     // Decrypt data
+    printf("DEBUG: Decrypting data\n");
     if (EVP_DecryptUpdate(ctx, plaintext, &len, encrypted_data, (int)encrypted_len) != 1) {
+        printf("DEBUG: Failed to decrypt data\n");
         EVP_CIPHER_CTX_free(ctx);
         return CRYPTO_ERROR_DECRYPT_FAILED;
     }
     *plaintext_len = len;
+    printf("DEBUG: Decrypted %d bytes\n", len);
     
     // Set expected tag
+    printf("DEBUG: Setting expected authentication tag\n");
+    printf("DEBUG: Expected auth tag (first 4 bytes): ");
+    for (int i = 0; i < 4 && i < AES_TAG_SIZE; i++) {
+        printf("%02x ", tag[i]);
+    }
+    printf("\n");
     if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, AES_TAG_SIZE, (void*)tag) != 1) {
+        printf("DEBUG: Failed to set expected authentication tag\n");
         EVP_CIPHER_CTX_free(ctx);
         return CRYPTO_ERROR_DECRYPT_FAILED;
     }
     
     // Finalize decryption
+    printf("DEBUG: Finalizing decryption\n");
     if (EVP_DecryptFinal_ex(ctx, plaintext + len, &len) != 1) {
+        printf("DEBUG: Failed to finalize decryption (authentication failed)\n");
         EVP_CIPHER_CTX_free(ctx);
         return CRYPTO_ERROR_DECRYPT_FAILED;
     }
     *plaintext_len += len;
+    printf("DEBUG: Decryption completed successfully, final plaintext_len=%zu\n", *plaintext_len);
     
     EVP_CIPHER_CTX_free(ctx);
     return CRYPTO_SUCCESS;
@@ -295,27 +350,42 @@ static crypto_error_t decrypt_data(const uint8_t *aes_key, const uint8_t *cipher
 // Custom PQC backend implementation
 crypto_error_t crypto_backend_custom_pqc_init(crypto_context_t *ctx) {
     if (ctx == NULL) {
+        printf("DEBUG: ctx is NULL\n");
         return CRYPTO_ERROR_INVALID_PARAM;
     }
     
+    printf("DEBUG: Starting crypto backend initialization\n");
+    
     custom_pqc_ctx_t *pqc_ctx = malloc(sizeof(custom_pqc_ctx_t));
     if (pqc_ctx == NULL) {
+        printf("DEBUG: Failed to allocate memory for pqc_ctx\n");
         return CRYPTO_ERROR_INIT_FAILED;
     }
     
     memset(pqc_ctx, 0, sizeof(custom_pqc_ctx_t));
     
     // Initialize liboqs
+    printf("DEBUG: Initializing liboqs\n");
     OQS_init();
     
     // Create ML-KEM-512 instance
+    printf("DEBUG: Creating ML-KEM-512 instance\n");
     pqc_ctx->kem = OQS_KEM_new(OQS_KEM_alg_ml_kem_512);
     if (pqc_ctx->kem == NULL) {
+        printf("DEBUG: Failed to create ML-KEM-512 instance\n");
         free(pqc_ctx);
         return CRYPTO_ERROR_INIT_FAILED;
     }
     
+    printf("DEBUG: ML-KEM-512 instance created successfully\n");
+    
     // Allocate memory for keys
+    printf("DEBUG: Allocating memory for keys\n");
+    printf("DEBUG: Public key length: %zu\n", pqc_ctx->kem->length_public_key);
+    printf("DEBUG: Secret key length: %zu\n", pqc_ctx->kem->length_secret_key);
+    printf("DEBUG: Ciphertext length: %zu\n", pqc_ctx->kem->length_ciphertext);
+    printf("DEBUG: Shared secret length: %zu\n", pqc_ctx->kem->length_shared_secret);
+    
     pqc_ctx->public_key = malloc(pqc_ctx->kem->length_public_key);
     pqc_ctx->secret_key = malloc(pqc_ctx->kem->length_secret_key);
     pqc_ctx->ciphertext = malloc(pqc_ctx->kem->length_ciphertext);
@@ -324,14 +394,18 @@ crypto_error_t crypto_backend_custom_pqc_init(crypto_context_t *ctx) {
     
     if (!pqc_ctx->public_key || !pqc_ctx->secret_key || !pqc_ctx->ciphertext || 
         !pqc_ctx->shared_secret || !pqc_ctx->aes_key) {
+        printf("DEBUG: Failed to allocate memory for keys\n");
         crypto_backend_custom_pqc_cleanup(ctx);
         return CRYPTO_ERROR_INIT_FAILED;
     }
+    
+    printf("DEBUG: Memory allocation successful\n");
     
     ctx->backend_ctx = pqc_ctx;
     ctx->shared_secret = pqc_ctx->shared_secret;
     ctx->shared_secret_len = pqc_ctx->kem->length_shared_secret;
     ctx->sequence_number = 0;
+    pqc_ctx->expected_sequence = 0;
     
     return CRYPTO_SUCCESS;
 }
@@ -378,6 +452,10 @@ crypto_error_t crypto_backend_custom_pqc_handshake_server(crypto_context_t *ctx)
     }
     
     ctx->handshake_complete = true;
+    // Server sends first message, so start with sequence number 1
+    ctx->sequence_number = 1;
+    // Server expects client messages to start with sequence number 0
+    pqc_ctx->expected_sequence = 0;
     return CRYPTO_SUCCESS;
 }
 
@@ -417,6 +495,8 @@ crypto_error_t crypto_backend_custom_pqc_handshake_client(crypto_context_t *ctx)
     }
     
     ctx->handshake_complete = true;
+    // Client expects server messages to start with sequence number 1
+    pqc_ctx->expected_sequence = 1;
     return CRYPTO_SUCCESS;
 }
 
@@ -461,13 +541,14 @@ crypto_error_t crypto_backend_custom_pqc_recv_message(crypto_context_t *ctx, uin
         return CRYPTO_ERROR_RECV_FAILED;
     }
     
-    // Decrypt data
-    err = decrypt_data(pqc_ctx->aes_key, encrypted_data, encrypted_len, data, len, ctx->sequence_number);
+    // Decrypt data using expected sequence number
+    err = decrypt_data(pqc_ctx->aes_key, encrypted_data, encrypted_len, data, len, pqc_ctx->expected_sequence);
     if (err != CRYPTO_SUCCESS) {
         return err;
     }
     
-    ctx->sequence_number++;
+    // Increment expected sequence for next message
+    pqc_ctx->expected_sequence++;
     return CRYPTO_SUCCESS;
 }
 
