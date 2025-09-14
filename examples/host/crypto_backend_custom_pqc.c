@@ -8,12 +8,36 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <time.h>
+
+// Conditional includes based on available backends
+#ifdef USE_OPENSSL_BACKEND
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 #include <openssl/sha.h>
 #include <openssl/kdf.h>
 #include <openssl/params.h>
 #include <openssl/core_names.h>
+#endif
+
+#ifdef USE_MBEDTLS_BACKEND
+#include <mbedtls/cipher.h>
+#include <mbedtls/ctr_drbg.h>
+#include <mbedtls/entropy.h>
+#include <mbedtls/hkdf.h>
+#include <mbedtls/md.h>
+#include <mbedtls/platform.h>
+#endif
+
+// Default backend selection
+#ifndef CRYPTO_BACKEND_DEFAULT_OPENSSL
+#ifndef CRYPTO_BACKEND_DEFAULT_MBEDTLS
+#ifdef USE_OPENSSL_BACKEND
+#define CRYPTO_BACKEND_DEFAULT_OPENSSL
+#elif defined(USE_MBEDTLS_BACKEND)
+#define CRYPTO_BACKEND_DEFAULT_MBEDTLS
+#endif
+#endif
+#endif
 
 // Message types for our custom protocol
 #define MSG_TYPE_PUBLIC_KEY    0x01
@@ -39,7 +63,45 @@ typedef struct {
     uint8_t *aes_key;
     uint32_t sequence_number;
     uint32_t expected_sequence;
+    crypto_op_backend_t op_backend;  // Backend for crypto operations
 } custom_pqc_ctx_t;
+
+// Backend availability checking
+static crypto_op_backend_t get_available_backends(void) {
+    crypto_op_backend_t available = 0;
+#ifdef USE_OPENSSL_BACKEND
+    available |= (1 << CRYPTO_OP_BACKEND_OPENSSL);  // 1 << 0 = 1
+#endif
+#ifdef USE_MBEDTLS_BACKEND
+    available |= (1 << CRYPTO_OP_BACKEND_MBEDTLS);  // 1 << 1 = 2
+#endif
+    return available;
+}
+
+// Default backend selection
+static crypto_op_backend_t get_default_backend(void) {
+    printf("DEBUG: Backend selection logic:\n");
+#ifdef CRYPTO_BACKEND_DEFAULT_OPENSSL
+    printf("DEBUG: CRYPTO_BACKEND_DEFAULT_OPENSSL defined - using OpenSSL\n");
+    return CRYPTO_OP_BACKEND_OPENSSL;
+#elif defined(CRYPTO_BACKEND_DEFAULT_MBEDTLS)
+    printf("DEBUG: CRYPTO_BACKEND_DEFAULT_MBEDTLS defined - using mbedTLS\n");
+    return CRYPTO_OP_BACKEND_MBEDTLS;
+#else
+    printf("DEBUG: No default backend defined, using fallback logic\n");
+    // Fallback logic
+#ifdef USE_OPENSSL_BACKEND
+    printf("DEBUG: USE_OPENSSL_BACKEND defined - using OpenSSL\n");
+    return CRYPTO_OP_BACKEND_OPENSSL;
+#elif defined(USE_MBEDTLS_BACKEND)
+    printf("DEBUG: USE_MBEDTLS_BACKEND defined - using mbedTLS\n");
+    return CRYPTO_OP_BACKEND_MBEDTLS;
+#else
+    printf("DEBUG: No backend defined - defaulting to OpenSSL\n");
+    return CRYPTO_OP_BACKEND_OPENSSL; // Default fallback
+#endif
+#endif
+}
 
 // Helper function to send protocol message
 static crypto_error_t send_protocol_message(int socket_fd, uint8_t msg_type, const uint8_t *data, size_t len) {
@@ -97,8 +159,11 @@ static crypto_error_t recv_protocol_message(int socket_fd, uint8_t *msg_type, ui
     return CRYPTO_SUCCESS;
 }
 
-// Derive AES key from shared secret using HKDF
-static crypto_error_t derive_aes_key(const uint8_t *shared_secret, size_t shared_secret_len, uint8_t *aes_key) {
+// OpenSSL HKDF implementation
+#ifdef USE_OPENSSL_BACKEND
+static crypto_error_t derive_aes_key_openssl(const uint8_t *shared_secret, size_t shared_secret_len, uint8_t *aes_key) {
+    printf("DEBUG: Using OpenSSL backend for HKDF key derivation\n");
+    
     const char *info = "PQC-TCP-AES-KEY";
     const uint8_t *salt = (const uint8_t *)"PQC-TCP-SALT";
     
@@ -142,11 +207,11 @@ static crypto_error_t derive_aes_key(const uint8_t *shared_secret, size_t shared
     EVP_KDF_free(kdf);
     
     if (ret <= 0) {
-        printf("DEBUG: HKDF key derivation failed\n");
+        printf("DEBUG: OpenSSL HKDF key derivation failed\n");
         return CRYPTO_ERROR_INIT_FAILED;
     }
     
-    printf("DEBUG: HKDF key derivation successful\n");
+    printf("DEBUG: OpenSSL HKDF key derivation successful\n");
     printf("DEBUG: Derived AES key (first 8 bytes): ");
     for (int i = 0; i < 8 && i < AES_KEY_SIZE; i++) {
         printf("%02x ", aes_key[i]);
@@ -154,6 +219,61 @@ static crypto_error_t derive_aes_key(const uint8_t *shared_secret, size_t shared
     printf("\n");
     
     return CRYPTO_SUCCESS;
+}
+#endif
+
+// mbedTLS HKDF implementation
+#ifdef USE_MBEDTLS_BACKEND
+static crypto_error_t derive_aes_key_mbedtls(const uint8_t *shared_secret, size_t shared_secret_len, uint8_t *aes_key) {
+    printf("DEBUG: Using mbedTLS backend for HKDF key derivation\n");
+    
+    const char *info = "PQC-TCP-AES-KEY";
+    const uint8_t *salt = (const uint8_t *)"PQC-TCP-SALT";
+    const size_t salt_len = 12;
+    const size_t info_len = strlen(info);
+    
+    int ret = mbedtls_hkdf(
+        mbedtls_md_info_from_type(MBEDTLS_MD_SHA256),
+        salt, salt_len,
+        shared_secret, shared_secret_len,
+        (const unsigned char *)info, info_len,
+        aes_key, AES_KEY_SIZE
+    );
+    
+    if (ret != 0) {
+        printf("DEBUG: mbedTLS HKDF key derivation failed: -0x%04x\n", -ret);
+        return CRYPTO_ERROR_INIT_FAILED;
+    }
+    
+    printf("DEBUG: mbedTLS HKDF key derivation successful\n");
+    printf("DEBUG: Derived AES key (first 8 bytes): ");
+    for (int i = 0; i < 8 && i < AES_KEY_SIZE; i++) {
+        printf("%02x ", aes_key[i]);
+    }
+    printf("\n");
+    
+    return CRYPTO_SUCCESS;
+}
+#endif
+
+// Unified HKDF interface
+static crypto_error_t derive_aes_key(const uint8_t *shared_secret, size_t shared_secret_len, uint8_t *aes_key, crypto_op_backend_t backend) {
+    printf("DEBUG: HKDF key derivation requested with backend: %s\n", 
+           (backend == CRYPTO_OP_BACKEND_OPENSSL) ? "OpenSSL" : "mbedTLS");
+    
+    switch (backend) {
+#ifdef USE_OPENSSL_BACKEND
+        case CRYPTO_OP_BACKEND_OPENSSL:
+            return derive_aes_key_openssl(shared_secret, shared_secret_len, aes_key);
+#endif
+#ifdef USE_MBEDTLS_BACKEND
+        case CRYPTO_OP_BACKEND_MBEDTLS:
+            return derive_aes_key_mbedtls(shared_secret, shared_secret_len, aes_key);
+#endif
+        default:
+            printf("DEBUG: Unsupported crypto backend for HKDF: %d\n", backend);
+            return CRYPTO_ERROR_BACKEND_NOT_AVAILABLE;
+    }
 }
 
 // Encrypt data with AES-256-GCM
@@ -364,6 +484,13 @@ crypto_error_t crypto_backend_custom_pqc_init(crypto_context_t *ctx) {
     
     memset(pqc_ctx, 0, sizeof(custom_pqc_ctx_t));
     
+    // Set default operation backend
+    pqc_ctx->op_backend = get_default_backend();
+    ctx->op_backend = pqc_ctx->op_backend;
+    
+    printf("DEBUG: Selected crypto operation backend: %s\n", 
+           (pqc_ctx->op_backend == CRYPTO_OP_BACKEND_OPENSSL) ? "OpenSSL" : "mbedTLS");
+    
     // Initialize liboqs
     printf("DEBUG: Initializing liboqs\n");
     OQS_init();
@@ -446,7 +573,7 @@ crypto_error_t crypto_backend_custom_pqc_handshake_server(crypto_context_t *ctx)
     }
     
     // Derive AES key
-    err = derive_aes_key(pqc_ctx->shared_secret, pqc_ctx->kem->length_shared_secret, pqc_ctx->aes_key);
+    err = derive_aes_key(pqc_ctx->shared_secret, pqc_ctx->kem->length_shared_secret, pqc_ctx->aes_key, pqc_ctx->op_backend);
     if (err != CRYPTO_SUCCESS) {
         return err;
     }
@@ -489,7 +616,7 @@ crypto_error_t crypto_backend_custom_pqc_handshake_client(crypto_context_t *ctx)
     }
     
     // Derive AES key
-    err = derive_aes_key(pqc_ctx->shared_secret, pqc_ctx->kem->length_shared_secret, pqc_ctx->aes_key);
+    err = derive_aes_key(pqc_ctx->shared_secret, pqc_ctx->kem->length_shared_secret, pqc_ctx->aes_key, pqc_ctx->op_backend);
     if (err != CRYPTO_SUCCESS) {
         return err;
     }
@@ -700,10 +827,40 @@ const char* crypto_error_string(crypto_error_t error) {
         case CRYPTO_ERROR_DECRYPT_FAILED: return "Decryption failed";
         case CRYPTO_ERROR_NOT_INITIALIZED: return "Not initialized";
         case CRYPTO_ERROR_HANDSHAKE_NOT_COMPLETE: return "Handshake not complete";
+        case CRYPTO_ERROR_BACKEND_NOT_AVAILABLE: return "Backend not available";
         default: return "Unknown error";
     }
 }
 
 bool crypto_is_handshake_complete(crypto_context_t *ctx) {
     return ctx != NULL && ctx->handshake_complete;
+}
+
+// Backend switching function
+crypto_error_t crypto_set_operation_backend(crypto_context_t *ctx, crypto_op_backend_t op_backend) {
+    if (ctx == NULL || ctx->backend_ctx == NULL) {
+        return CRYPTO_ERROR_INVALID_PARAM;
+    }
+    
+    custom_pqc_ctx_t *pqc_ctx = (custom_pqc_ctx_t *)ctx->backend_ctx;
+    
+    // Check if backend is available
+    crypto_op_backend_t available = get_available_backends();
+    if (!(available & (1 << op_backend))) {
+        printf("DEBUG: Requested backend %d not available (available: %d)\n", op_backend, available);
+        return CRYPTO_ERROR_BACKEND_NOT_AVAILABLE;
+    }
+    
+    pqc_ctx->op_backend = op_backend;
+    ctx->op_backend = op_backend;
+    
+    printf("DEBUG: Switched crypto operation backend to: %s\n", 
+           (op_backend == CRYPTO_OP_BACKEND_OPENSSL) ? "OpenSSL" : "mbedTLS");
+    
+    return CRYPTO_SUCCESS;
+}
+
+// Get available backends
+crypto_op_backend_t crypto_get_available_backends(void) {
+    return get_available_backends();
 }
