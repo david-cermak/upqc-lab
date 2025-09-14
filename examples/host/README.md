@@ -19,6 +19,29 @@ cmake ..
 make
 ```
 
+### Backend Selection
+
+This example supports both OpenSSL and mbedTLS for HKDF and AES‑GCM (AEAD). liboqs provides the KEM.
+
+- Enable/disable backends at configure time:
+  - OpenSSL: `-DUSE_OPENSSL_BACKEND=ON|OFF` (requires system OpenSSL 3.x when ON)
+  - mbedTLS: `-DUSE_MBEDTLS_BACKEND=ON|OFF` (built from `impl/mbedtls`)
+- Choose default operation backend (HKDF + AEAD):
+  - `-DCRYPTO_BACKEND_DEFAULT=openssl` or `-DCRYPTO_BACKEND_DEFAULT=mbedtls`
+
+Examples:
+
+```bash
+# Use OpenSSL (default)
+cmake -DCRYPTO_BACKEND_DEFAULT=openssl .. && make -j
+
+# Use mbedTLS for HKDF + AES-GCM (no system OpenSSL required)
+cmake -DUSE_OPENSSL_BACKEND=OFF -DUSE_MBEDTLS_BACKEND=ON -DCRYPTO_BACKEND_DEFAULT=mbedtls .. && make -j
+
+# Build both backends and pick mbedTLS as default
+cmake -DUSE_MBEDTLS_BACKEND=ON -DCRYPTO_BACKEND_DEFAULT=mbedtls .. && make -j
+```
+
 ## Run
 
 1. Start the server:
@@ -96,8 +119,9 @@ Each encrypted message follows the structure:
 
 ## Dependencies
 
-- **OpenSSL 3.0+**: For AES-GCM and HKDF
-- **liboqs**: For ML-KEM-512 implementation
+- **OpenSSL 3.0+**: For AES-GCM and HKDF when OpenSSL backend is enabled
+- **mbedTLS**: Built from `impl/mbedtls` when enabled (provides HKDF and AES-GCM)
+- **liboqs**: Submodule for ML-KEM-512 implementation
 - **CMake**: Build system
 
 ## Architecture
@@ -107,4 +131,4 @@ The implementation uses a modular crypto backend system:
 - `crypto_backend.h`: Common interface for different crypto backends
 - `server.c` / `client.c`: Application logic
 
-This design allows for easy integration of different post-quantum algorithms and cryptographic backends.
+This design allows selecting OpenSSL or mbedTLS at build time (and switching at runtime via `crypto_set_operation_backend`) for HKDF and AES‑GCM, while using liboqs for the KEM.

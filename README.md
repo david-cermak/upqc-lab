@@ -70,3 +70,18 @@ The PQC market is experiencing explosive growth, valued at $297.82 million in 20
 5. **Plan for hybrid/rollback paths** until PQC is fully trusted
 
 The window for proactive migration is narrowing - with quantum computers potentially arriving in the early 2030s, organizations must act decisively to protect their digital infrastructure against future quantum threats.
+
+## Host Example & Crypto Backends
+
+A minimal TCP client/server demonstrating ML-KEM-512 + AES-256-GCM lives in `examples/host` (see its README for details). It uses liboqs for KEM and supports OpenSSL or mbedTLS for HKDF and AEAD (AES-GCM).
+
+Build quickstart:
+
+```
+cd examples/host && mkdir -p build && cd build
+cmake -DCRYPTO_BACKEND_DEFAULT=openssl .. && make -j
+# or use mbedTLS for HKDF + AES-GCM
+cmake -DUSE_OPENSSL_BACKEND=OFF -DUSE_MBEDTLS_BACKEND=ON -DCRYPTO_BACKEND_DEFAULT=mbedtls .. && make -j
+```
+
+Runtime switching is available via `crypto_set_operation_backend(...)` in the example code.

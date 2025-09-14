@@ -26,6 +26,7 @@
 #include <mbedtls/hkdf.h>
 #include <mbedtls/md.h>
 #include <mbedtls/platform.h>
+#include <mbedtls/gcm.h>
 #endif
 
 // Default backend selection
@@ -64,6 +65,12 @@ typedef struct {
     uint32_t sequence_number;
     uint32_t expected_sequence;
     crypto_op_backend_t op_backend;  // Backend for crypto operations
+#ifdef USE_MBEDTLS_BACKEND
+    // RNG for IV generation when using mbedTLS AEAD
+    mbedtls_entropy_context entropy;
+    mbedtls_ctr_drbg_context ctr_drbg;
+    bool rng_initialized;
+#endif
 } custom_pqc_ctx_t;
 
 // Backend availability checking
@@ -277,7 +284,9 @@ static crypto_error_t derive_aes_key(const uint8_t *shared_secret, size_t shared
 }
 
 // Encrypt data with AES-256-GCM
-static crypto_error_t encrypt_data(const uint8_t *aes_key, const uint8_t *plaintext, size_t plaintext_len,
+// OpenSSL AEAD implementation
+#ifdef USE_OPENSSL_BACKEND
+static crypto_error_t encrypt_data_openssl(const uint8_t *aes_key, const uint8_t *plaintext, size_t plaintext_len,
                                   uint8_t *ciphertext, size_t *ciphertext_len, uint32_t sequence_number) {
     printf("DEBUG: Starting encryption - plaintext_len=%zu, sequence_number=%u\n", plaintext_len, sequence_number);
     
@@ -379,9 +388,12 @@ static crypto_error_t encrypt_data(const uint8_t *aes_key, const uint8_t *plaint
     
     return CRYPTO_SUCCESS;
 }
+#endif
 
 // Decrypt data with AES-256-GCM
-static crypto_error_t decrypt_data(const uint8_t *aes_key, const uint8_t *ciphertext, size_t ciphertext_len,
+// OpenSSL AEAD implementation
+#ifdef USE_OPENSSL_BACKEND
+static crypto_error_t decrypt_data_openssl(const uint8_t *aes_key, const uint8_t *ciphertext, size_t ciphertext_len,
                                   uint8_t *plaintext, size_t *plaintext_len, uint32_t expected_sequence) {
     printf("DEBUG: Starting decryption - ciphertext_len=%zu, expected_sequence=%u\n", ciphertext_len, expected_sequence);
     
@@ -466,6 +478,163 @@ static crypto_error_t decrypt_data(const uint8_t *aes_key, const uint8_t *cipher
     EVP_CIPHER_CTX_free(ctx);
     return CRYPTO_SUCCESS;
 }
+#endif
+
+// mbedTLS AEAD implementation
+#ifdef USE_MBEDTLS_BACKEND
+static crypto_error_t encrypt_data_mbedtls(custom_pqc_ctx_t *pqc_ctx, const uint8_t *aes_key,
+                                           const uint8_t *plaintext, size_t plaintext_len,
+                                           uint8_t *ciphertext, size_t *ciphertext_len,
+                                           uint32_t sequence_number) {
+    printf("DEBUG: Starting mbedTLS encryption - plaintext_len=%zu, sequence_number=%u\n", plaintext_len, sequence_number);
+
+    if (!pqc_ctx->rng_initialized) {
+        printf("DEBUG: mbedTLS RNG not initialized\n");
+        return CRYPTO_ERROR_ENCRYPT_FAILED;
+    }
+
+    mbedtls_gcm_context gcm;
+    mbedtls_gcm_init(&gcm);
+
+    int ret = mbedtls_gcm_setkey(&gcm, MBEDTLS_CIPHER_ID_AES, aes_key, 256);
+    if (ret != 0) {
+        printf("DEBUG: mbedTLS setkey failed: -0x%04x\n", -ret);
+        mbedtls_gcm_free(&gcm);
+        return CRYPTO_ERROR_ENCRYPT_FAILED;
+    }
+
+    // Generate random IV
+    uint8_t iv[AES_IV_SIZE];
+    ret = mbedtls_ctr_drbg_random(&pqc_ctx->ctr_drbg, iv, AES_IV_SIZE);
+    if (ret != 0) {
+        printf("DEBUG: mbedTLS IV generation failed: -0x%04x\n", -ret);
+        mbedtls_gcm_free(&gcm);
+        return CRYPTO_ERROR_ENCRYPT_FAILED;
+    }
+
+    uint8_t aad[SEQUENCE_SIZE];
+    uint32_t net_seq = htonl(sequence_number);
+    memcpy(aad, &net_seq, SEQUENCE_SIZE);
+
+    // Output layout: [IV][ciphertext][tag]
+    uint8_t *out = ciphertext;
+    memcpy(out, iv, AES_IV_SIZE);
+
+    uint8_t tag[AES_TAG_SIZE];
+
+    ret = mbedtls_gcm_crypt_and_tag(&gcm, MBEDTLS_GCM_ENCRYPT,
+                                    plaintext_len,
+                                    iv, AES_IV_SIZE,
+                                    aad, SEQUENCE_SIZE,
+                                    plaintext,
+                                    out + AES_IV_SIZE,
+                                    AES_TAG_SIZE,
+                                    tag);
+    if (ret != 0) {
+        printf("DEBUG: mbedTLS gcm_crypt_and_tag failed: -0x%04x\n", -ret);
+        mbedtls_gcm_free(&gcm);
+        return CRYPTO_ERROR_ENCRYPT_FAILED;
+    }
+
+    memcpy(out + AES_IV_SIZE + plaintext_len, tag, AES_TAG_SIZE);
+    *ciphertext_len = AES_IV_SIZE + plaintext_len + AES_TAG_SIZE;
+
+    mbedtls_gcm_free(&gcm);
+    printf("DEBUG: mbedTLS encryption completed successfully, final ciphertext_len=%zu\n", *ciphertext_len);
+    return CRYPTO_SUCCESS;
+}
+
+static crypto_error_t decrypt_data_mbedtls(const uint8_t *aes_key,
+                                           const uint8_t *ciphertext, size_t ciphertext_len,
+                                           uint8_t *plaintext, size_t *plaintext_len,
+                                           uint32_t expected_sequence) {
+    printf("DEBUG: Starting mbedTLS decryption - ciphertext_len=%zu, expected_sequence=%u\n", ciphertext_len, expected_sequence);
+
+    if (ciphertext_len < AES_IV_SIZE + AES_TAG_SIZE) {
+        printf("DEBUG: Ciphertext too short: %zu < %d\n", ciphertext_len, AES_IV_SIZE + AES_TAG_SIZE);
+        return CRYPTO_ERROR_DECRYPT_FAILED;
+    }
+
+    const uint8_t *iv = ciphertext;
+    const uint8_t *tag = ciphertext + ciphertext_len - AES_TAG_SIZE;
+    const uint8_t *encrypted_data = ciphertext + AES_IV_SIZE;
+    size_t encrypted_len = ciphertext_len - AES_IV_SIZE - AES_TAG_SIZE;
+
+    mbedtls_gcm_context gcm;
+    mbedtls_gcm_init(&gcm);
+    int ret = mbedtls_gcm_setkey(&gcm, MBEDTLS_CIPHER_ID_AES, aes_key, 256);
+    if (ret != 0) {
+        printf("DEBUG: mbedTLS setkey failed: -0x%04x\n", -ret);
+        mbedtls_gcm_free(&gcm);
+        return CRYPTO_ERROR_DECRYPT_FAILED;
+    }
+
+    uint8_t aad[SEQUENCE_SIZE];
+    uint32_t net_seq = htonl(expected_sequence);
+    memcpy(aad, &net_seq, SEQUENCE_SIZE);
+
+    ret = mbedtls_gcm_auth_decrypt(&gcm,
+                                   encrypted_len,
+                                   iv, AES_IV_SIZE,
+                                   aad, SEQUENCE_SIZE,
+                                   tag, AES_TAG_SIZE,
+                                   encrypted_data,
+                                   plaintext);
+    if (ret != 0) {
+        printf("DEBUG: mbedTLS gcm_auth_decrypt failed: -0x%04x\n", -ret);
+        mbedtls_gcm_free(&gcm);
+        return CRYPTO_ERROR_DECRYPT_FAILED;
+    }
+
+    *plaintext_len = encrypted_len;
+    mbedtls_gcm_free(&gcm);
+    printf("DEBUG: mbedTLS decryption completed successfully, final plaintext_len=%zu\n", *plaintext_len);
+    return CRYPTO_SUCCESS;
+}
+#endif
+
+// Unified AEAD interface
+static crypto_error_t encrypt_data(custom_pqc_ctx_t *pqc_ctx, const uint8_t *aes_key,
+                                   const uint8_t *plaintext, size_t plaintext_len,
+                                   uint8_t *ciphertext, size_t *ciphertext_len,
+                                   uint32_t sequence_number, crypto_op_backend_t backend) {
+    printf("DEBUG: AEAD encrypt requested with backend: %s\n",
+           (backend == CRYPTO_OP_BACKEND_OPENSSL) ? "OpenSSL" : "mbedTLS");
+    switch (backend) {
+#ifdef USE_OPENSSL_BACKEND
+        case CRYPTO_OP_BACKEND_OPENSSL:
+            return encrypt_data_openssl(aes_key, plaintext, plaintext_len, ciphertext, ciphertext_len, sequence_number);
+#endif
+#ifdef USE_MBEDTLS_BACKEND
+        case CRYPTO_OP_BACKEND_MBEDTLS:
+            return encrypt_data_mbedtls(pqc_ctx, aes_key, plaintext, plaintext_len, ciphertext, ciphertext_len, sequence_number);
+#endif
+        default:
+            printf("DEBUG: Unsupported crypto backend for AEAD encrypt: %d\n", backend);
+            return CRYPTO_ERROR_BACKEND_NOT_AVAILABLE;
+    }
+}
+
+static crypto_error_t decrypt_data(custom_pqc_ctx_t *pqc_ctx, const uint8_t *aes_key,
+                                   const uint8_t *ciphertext, size_t ciphertext_len,
+                                   uint8_t *plaintext, size_t *plaintext_len,
+                                   uint32_t expected_sequence, crypto_op_backend_t backend) {
+    printf("DEBUG: AEAD decrypt requested with backend: %s\n",
+           (backend == CRYPTO_OP_BACKEND_OPENSSL) ? "OpenSSL" : "mbedTLS");
+    switch (backend) {
+#ifdef USE_OPENSSL_BACKEND
+        case CRYPTO_OP_BACKEND_OPENSSL:
+            return decrypt_data_openssl(aes_key, ciphertext, ciphertext_len, plaintext, plaintext_len, expected_sequence);
+#endif
+#ifdef USE_MBEDTLS_BACKEND
+        case CRYPTO_OP_BACKEND_MBEDTLS:
+            return decrypt_data_mbedtls(aes_key, ciphertext, ciphertext_len, plaintext, plaintext_len, expected_sequence);
+#endif
+        default:
+            printf("DEBUG: Unsupported crypto backend for AEAD decrypt: %d\n", backend);
+            return CRYPTO_ERROR_BACKEND_NOT_AVAILABLE;
+    }
+}
 
 // Custom PQC backend implementation
 crypto_error_t crypto_backend_custom_pqc_init(crypto_context_t *ctx) {
@@ -487,9 +656,29 @@ crypto_error_t crypto_backend_custom_pqc_init(crypto_context_t *ctx) {
     // Set default operation backend
     pqc_ctx->op_backend = get_default_backend();
     ctx->op_backend = pqc_ctx->op_backend;
-    
+
     printf("DEBUG: Selected crypto operation backend: %s\n", 
            (pqc_ctx->op_backend == CRYPTO_OP_BACKEND_OPENSSL) ? "OpenSSL" : "mbedTLS");
+
+#ifdef USE_MBEDTLS_BACKEND
+    // Initialize RNG if using mbedTLS backend for operations (needed for IVs)
+    pqc_ctx->rng_initialized = false;
+    if (pqc_ctx->op_backend == CRYPTO_OP_BACKEND_MBEDTLS) {
+        const char *pers = "pqc-aes-gcm";
+        mbedtls_entropy_init(&pqc_ctx->entropy);
+        mbedtls_ctr_drbg_init(&pqc_ctx->ctr_drbg);
+        int ret = mbedtls_ctr_drbg_seed(&pqc_ctx->ctr_drbg, mbedtls_entropy_func, &pqc_ctx->entropy,
+                                        (const unsigned char *)pers, strlen(pers));
+        if (ret != 0) {
+            printf("DEBUG: mbedTLS RNG seed failed: -0x%04x\n", -ret);
+            mbedtls_ctr_drbg_free(&pqc_ctx->ctr_drbg);
+            mbedtls_entropy_free(&pqc_ctx->entropy);
+            free(pqc_ctx);
+            return CRYPTO_ERROR_INIT_FAILED;
+        }
+        pqc_ctx->rng_initialized = true;
+    }
+#endif
     
     // Initialize liboqs
     printf("DEBUG: Initializing liboqs\n");
@@ -637,7 +826,7 @@ crypto_error_t crypto_backend_custom_pqc_send_message(crypto_context_t *ctx, con
     // Encrypt data
     uint8_t encrypted_data[MAX_MESSAGE_SIZE];
     size_t encrypted_len;
-    crypto_error_t err = encrypt_data(pqc_ctx->aes_key, data, len, encrypted_data, &encrypted_len, ctx->sequence_number);
+    crypto_error_t err = encrypt_data(pqc_ctx, pqc_ctx->aes_key, data, len, encrypted_data, &encrypted_len, ctx->sequence_number, pqc_ctx->op_backend);
     if (err != CRYPTO_SUCCESS) {
         return err;
     }
@@ -669,7 +858,7 @@ crypto_error_t crypto_backend_custom_pqc_recv_message(crypto_context_t *ctx, uin
     }
     
     // Decrypt data using expected sequence number
-    err = decrypt_data(pqc_ctx->aes_key, encrypted_data, encrypted_len, data, len, pqc_ctx->expected_sequence);
+    err = decrypt_data(pqc_ctx, pqc_ctx->aes_key, encrypted_data, encrypted_len, data, len, pqc_ctx->expected_sequence, pqc_ctx->op_backend);
     if (err != CRYPTO_SUCCESS) {
         return err;
     }
@@ -704,7 +893,15 @@ crypto_error_t crypto_backend_custom_pqc_cleanup(crypto_context_t *ctx) {
     if (pqc_ctx->kem) {
         OQS_KEM_free(pqc_ctx->kem);
     }
-    
+
+#ifdef USE_MBEDTLS_BACKEND
+    if (pqc_ctx->rng_initialized) {
+        mbedtls_ctr_drbg_free(&pqc_ctx->ctr_drbg);
+        mbedtls_entropy_free(&pqc_ctx->entropy);
+        pqc_ctx->rng_initialized = false;
+    }
+#endif
+
     free(pqc_ctx);
     ctx->backend_ctx = NULL;
     
@@ -853,6 +1050,24 @@ crypto_error_t crypto_set_operation_backend(crypto_context_t *ctx, crypto_op_bac
     
     pqc_ctx->op_backend = op_backend;
     ctx->op_backend = op_backend;
+
+#ifdef USE_MBEDTLS_BACKEND
+    // Ensure RNG is initialized if switching to mbedTLS
+    if (op_backend == CRYPTO_OP_BACKEND_MBEDTLS && !pqc_ctx->rng_initialized) {
+        const char *pers = "pqc-aes-gcm";
+        mbedtls_entropy_init(&pqc_ctx->entropy);
+        mbedtls_ctr_drbg_init(&pqc_ctx->ctr_drbg);
+        int ret = mbedtls_ctr_drbg_seed(&pqc_ctx->ctr_drbg, mbedtls_entropy_func, &pqc_ctx->entropy,
+                                        (const unsigned char *)pers, strlen(pers));
+        if (ret != 0) {
+            printf("DEBUG: mbedTLS RNG seed (switch) failed: -0x%04x\n", -ret);
+            mbedtls_ctr_drbg_free(&pqc_ctx->ctr_drbg);
+            mbedtls_entropy_free(&pqc_ctx->entropy);
+            return CRYPTO_ERROR_INIT_FAILED;
+        }
+        pqc_ctx->rng_initialized = true;
+    }
+#endif
     
     printf("DEBUG: Switched crypto operation backend to: %s\n", 
            (op_backend == CRYPTO_OP_BACKEND_OPENSSL) ? "OpenSSL" : "mbedTLS");
