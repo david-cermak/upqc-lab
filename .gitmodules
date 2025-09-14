@@ -10,3 +10,6 @@
 [submodule "impl/PQClean"]
 	path = impl/PQClean
 	url = https://github.com/PQClean/PQClean.git
+[submodule "impl/mbedtls"]
+	path = impl/mbedtls
+	url = https://github.com/Mbed-TLS/mbedtls.git
