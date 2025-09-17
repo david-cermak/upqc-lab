@@ -1,5 +1,7 @@
 
-set(kem_ref_SRCS liboqs/src/kem/kem.c
+set(kem_ref_SRCS
+        liboqs/src/kem/kem.c
+        liboqs/src/kem/ml_kem/kem_ml_kem_512.c
         liboqs/src/kem/kyber/kem_kyber_512.c
         liboqs/src/common/common.c
         kyber/ref/kem.c
@@ -11,13 +13,13 @@ set(kem_ref_SRCS liboqs/src/kem/kem.c
         kyber/ref/ntt.c
         kyber/ref/verify.c
         kyber/ref/reduce.c
-        kyber/ref/randombytes.c
         kyber/ref/cbd.c)
 
 list(TRANSFORM kem_ref_SRCS PREPEND "../../../impl/")
 
 idf_component_register(SRCS "target.c" "client.c" "crypto_backend_custom_pqc.c"
         ${kem_ref_SRCS}
+        randombytes.c
 #        "/home/david/repos/upqc-lab/impl/liboqs/src/kem/kem.c"
 #        "/home/david/repos/upqc-lab/impl/kyber/ref/kem.c"
 #        "/home/david/repos/upqc-lab/impl/liboqs/src/kem/kyber/kem_kyber_512.c"

@@ -688,7 +688,8 @@ crypto_error_t crypto_backend_custom_pqc_init(crypto_context_t *ctx) {
     
     // Create ML-KEM-512 instance
     printf("DEBUG: Creating ML-KEM-512 instance\n");
-    pqc_ctx->kem = OQS_KEM_new(OQS_KEM_alg_ml_kem_512);
+    pqc_ctx->kem = OQS_KEM_new(OQS_KEM_alg_kyber_512);
+    // pqc_ctx->kem = OQS_KEM_new(OQS_KEM_alg_ml_kem_512);
     if (pqc_ctx->kem == NULL) {
         printf("DEBUG: Failed to create ML-KEM-512 instance\n");
         free(pqc_ctx);

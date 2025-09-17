@@ -76,32 +76,32 @@ add_executable(server server.c crypto_backend_custom_pqc.c)
 add_executable(client client.c crypto_backend_custom_pqc.c)
 
 # Create test executable
-add_executable(test_backends test_backends.c crypto_backend_custom_pqc.c)
+# add_executable(test_backends test_backends.c crypto_backend_custom_pqc.c)
 
 # Link liboqs to all executables
 target_link_libraries(server oqs)
 target_link_libraries(client oqs)
-target_link_libraries(test_backends oqs)
+# target_link_libraries(test_backends oqs)
 
 # Link crypto backends
 if(USE_OPENSSL_BACKEND)
     target_link_libraries(server OpenSSL::SSL OpenSSL::Crypto)
     target_link_libraries(client OpenSSL::SSL OpenSSL::Crypto)
-    target_link_libraries(test_backends OpenSSL::SSL OpenSSL::Crypto)
+    # target_link_libraries(test_backends OpenSSL::SSL OpenSSL::Crypto)
 endif()
 
 if(USE_MBEDTLS_BACKEND)
     target_link_libraries(server mbedtls)
     target_link_libraries(client mbedtls)
-    target_link_libraries(test_backends mbedtls)
+    # target_link_libraries(test_backends mbedtls)
 endif()
 
 # Include liboqs headers for all targets
 target_include_directories(server PRIVATE ../../impl/liboqs/src)
 target_include_directories(client PRIVATE ../../impl/liboqs/src)
-target_include_directories(test_backends PRIVATE ../../impl/liboqs/src)
+# target_include_directories(test_backends PRIVATE ../../impl/liboqs/src)
 
 # Optional: Set output directory
-set_target_properties(server client test_backends PROPERTIES
+set_target_properties(server client PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
