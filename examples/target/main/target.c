@@ -9,6 +9,7 @@
 #include "protocol_examples_common.h"
 
 int client_main();
+
 void app_main(void)
 {
     // Initialize ESP-IDF components

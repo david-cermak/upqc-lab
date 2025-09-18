@@ -8,7 +8,9 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <time.h>
+#include "esp_log.h"
 
+#define TAG "pqc"
 #define USE_MBEDTLS_BACKEND
 
 // Conditional includes based on available backends
@@ -795,11 +797,12 @@ crypto_error_t crypto_backend_custom_pqc_handshake_client(crypto_context_t *ctx)
     }
     
     // Encapsulate shared secret
+    ESP_LOGI(TAG, "Before encapsulation");
     OQS_STATUS rc = OQS_KEM_encaps(pqc_ctx->kem, pqc_ctx->ciphertext, pqc_ctx->shared_secret, pqc_ctx->public_key);
     if (rc != OQS_SUCCESS) {
         return CRYPTO_ERROR_HANDSHAKE_FAILED;
     }
-    
+    ESP_LOGI(TAG, "After encapsulation");
     // Send ciphertext to server
     err = send_protocol_message(ctx->socket_fd, MSG_TYPE_CIPHERTEXT, 
                                pqc_ctx->ciphertext, pqc_ctx->kem->length_ciphertext);

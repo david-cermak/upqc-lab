@@ -81,7 +81,7 @@ int main() {
     printf("Handshake completed successfully!\n");
 
     // Send welcome message
-    const char *welcome_msg = "Welcome to the PQC Lab Server! (Encrypted)\n";
+    const char *welcome_msg = "Alice says hello\n";
     err = crypto_send_message(&crypto_ctx, (const uint8_t *)welcome_msg, strlen(welcome_msg));
     if (err != CRYPTO_SUCCESS) {
         printf("Failed to send welcome message: %s\n", crypto_error_string(err));

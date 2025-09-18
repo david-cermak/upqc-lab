@@ -6,7 +6,9 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include "crypto_backend.h"
+#include "esp_log.h"
 
+#define TAG "client"
 #define PORT 3333
 #define BUFFER_SIZE 1024
 #define SERVER_IP "192.168.0.29"
@@ -53,7 +55,7 @@ int client_main()
     }
 
     // Perform ML-KEM-512 handshake
-    printf("Performing ML-KEM-512 handshake...\n");
+    ESP_LOGW(TAG, "Performing ML-KEM-512 handshake...\n");
     err = crypto_handshake_client(&crypto_ctx);
     if (err != CRYPTO_SUCCESS) {
         printf("Handshake failed: %s\n", crypto_error_string(err));
@@ -61,30 +63,34 @@ int client_main()
         close(client_fd);
         return EXIT_FAILURE;
     }
-    printf("Handshake completed successfully!\n");
+    ESP_LOGW(TAG, "Handshake completed successfully!\n");
 
-    // Receive welcome message
+    // Receive a welcome message
     uint8_t welcome_buffer[BUFFER_SIZE];
     size_t welcome_len;
     err = crypto_recv_message(&crypto_ctx, welcome_buffer, &welcome_len);
     if (err == CRYPTO_SUCCESS) {
         welcome_buffer[welcome_len] = '\0';
-        printf("Server: %s", (char *)welcome_buffer);
+        ESP_LOGI(TAG, "Server: %s", (char *)welcome_buffer);
     }
 
     // Interactive loop
-    printf("Type messages to send to server (type 'exit' to quit):\n");
-    
+    // printf("Type messages to send to server (type 'exit' to quit):\n");
+    int exit = 0;
     while (1) {
         printf("> ");
         fflush(stdout);
         
         // Read user input
-        if (fgets(message, BUFFER_SIZE, stdin) == NULL) {
-            break;
-        }
+        // if (fgets(message, BUFFER_SIZE, stdin) == NULL) {
+        //     break;
+        // }
+        if (exit)
+            strcpy(message, "exit\n\0");
+        else
+            strcpy(message, "Hello from ESP32\n\0");
 
-        // Send message to server
+        // Send a message to server
         err = crypto_send_message(&crypto_ctx, (const uint8_t *)message, strlen(message));
         if (err != CRYPTO_SUCCESS) {
             printf("Failed to send message: %s\n", crypto_error_string(err));
@@ -107,7 +113,10 @@ int client_main()
         }
 
         echo_buffer[echo_len] = '\0';
-        printf("Echo: %s", (char *)echo_buffer);
+        ESP_LOGI(TAG, "Echo: %s", (char *)echo_buffer);
+        if (exit)
+            break;
+        exit = 1;
     }
 
     // Cleanup
