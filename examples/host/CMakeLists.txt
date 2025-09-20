@@ -8,11 +8,9 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 # Compiler flags
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra")
 
-# Backend selection options
+# Backend selection options (exactly one must be ON)
 option(USE_OPENSSL_BACKEND "Use OpenSSL as crypto backend" ON)
-option(USE_MBEDTLS_BACKEND "Use mbedTLS as crypto backend" ON)
-set(CRYPTO_BACKEND_DEFAULT "openssl" CACHE STRING "Default backend: openssl or mbedtls")
-option(TEST_MBEDTLS_DEFAULT "Test with mbedTLS as default backend" OFF)
+option(USE_MBEDTLS_BACKEND "Use mbedTLS as crypto backend" OFF)
 
 # Configure liboqs build options
 set(OQS_MINIMAL_BUILD "" CACHE STRING "Build all algorithms")
@@ -49,24 +47,8 @@ if(USE_MBEDTLS_BACKEND)
 endif()
 
 # Validate backend selection
-if(NOT USE_OPENSSL_BACKEND AND NOT USE_MBEDTLS_BACKEND)
-    message(FATAL_ERROR "At least one crypto backend must be enabled")
-endif()
-
-# Set default backend
-if(TEST_MBEDTLS_DEFAULT AND USE_MBEDTLS_BACKEND)
-    add_definitions(-DCRYPTO_BACKEND_DEFAULT_MBEDTLS)
-    message(STATUS "Test mode: Default backend set to mbedTLS")
-elseif(CRYPTO_BACKEND_DEFAULT STREQUAL "openssl" AND USE_OPENSSL_BACKEND)
-    add_definitions(-DCRYPTO_BACKEND_DEFAULT_OPENSSL)
-elseif(CRYPTO_BACKEND_DEFAULT STREQUAL "mbedtls" AND USE_MBEDTLS_BACKEND)
-    add_definitions(-DCRYPTO_BACKEND_DEFAULT_MBEDTLS)
-elseif(USE_OPENSSL_BACKEND)
-    add_definitions(-DCRYPTO_BACKEND_DEFAULT_OPENSSL)
-    message(STATUS "Default backend set to OpenSSL")
-elseif(USE_MBEDTLS_BACKEND)
-    add_definitions(-DCRYPTO_BACKEND_DEFAULT_MBEDTLS)
-    message(STATUS "Default backend set to mbedTLS")
+if((USE_OPENSSL_BACKEND AND USE_MBEDTLS_BACKEND) OR (NOT USE_OPENSSL_BACKEND AND NOT USE_MBEDTLS_BACKEND))
+    message(FATAL_ERROR "Select exactly one backend: -DUSE_OPENSSL_BACKEND=ON -DUSE_MBEDTLS_BACKEND=OFF or vice versa")
 endif()
 
 # Create server executable
@@ -83,17 +65,17 @@ target_link_libraries(server oqs)
 target_link_libraries(client oqs)
 # target_link_libraries(test_backends oqs)
 
-# Link crypto backends
+# Backend-specific sources and linking
 if(USE_OPENSSL_BACKEND)
+    target_sources(server PRIVATE crypto_primitives_openssl.c)
+    target_sources(client PRIVATE crypto_primitives_openssl.c)
     target_link_libraries(server OpenSSL::SSL OpenSSL::Crypto)
     target_link_libraries(client OpenSSL::SSL OpenSSL::Crypto)
-    # target_link_libraries(test_backends OpenSSL::SSL OpenSSL::Crypto)
-endif()
-
-if(USE_MBEDTLS_BACKEND)
+elseif(USE_MBEDTLS_BACKEND)
+    target_sources(server PRIVATE crypto_primitives_mbedtls.c)
+    target_sources(client PRIVATE crypto_primitives_mbedtls.c)
     target_link_libraries(server mbedtls)
     target_link_libraries(client mbedtls)
-    # target_link_libraries(test_backends mbedtls)
 endif()
 
 # Include liboqs headers for all targets

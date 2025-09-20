@@ -21,25 +21,20 @@ make
 
 ### Backend Selection
 
-This example supports both OpenSSL and mbedTLS for HKDF and AES‑GCM (AEAD). liboqs provides the KEM.
+This example supports OpenSSL or mbedTLS for HKDF and AES‑GCM. Exactly one backend is compiled in, selected at configure time. liboqs provides the KEM.
 
-- Enable/disable backends at configure time:
-  - OpenSSL: `-DUSE_OPENSSL_BACKEND=ON|OFF` (requires system OpenSSL 3.x when ON)
-  - mbedTLS: `-DUSE_MBEDTLS_BACKEND=ON|OFF` (built from `impl/mbedtls`)
-- Choose default operation backend (HKDF + AEAD):
-  - `-DCRYPTO_BACKEND_DEFAULT=openssl` or `-DCRYPTO_BACKEND_DEFAULT=mbedtls`
+- Configure exactly one:
+  - OpenSSL: `-DUSE_OPENSSL_BACKEND=ON -DUSE_MBEDTLS_BACKEND=OFF` (requires OpenSSL ≥ 3)
+  - mbedTLS: `-DUSE_OPENSSL_BACKEND=OFF -DUSE_MBEDTLS_BACKEND=ON` (built from `impl/mbedtls`)
 
 Examples:
 
 ```bash
-# Use OpenSSL (default)
-cmake -DCRYPTO_BACKEND_DEFAULT=openssl .. && make -j
+# OpenSSL backend (default)
+cmake -DUSE_OPENSSL_BACKEND=ON -DUSE_MBEDTLS_BACKEND=OFF .. && make -j
 
-# Use mbedTLS for HKDF + AES-GCM (no system OpenSSL required)
-cmake -DUSE_OPENSSL_BACKEND=OFF -DUSE_MBEDTLS_BACKEND=ON -DCRYPTO_BACKEND_DEFAULT=mbedtls .. && make -j
-
-# Build both backends and pick mbedTLS as default
-cmake -DUSE_MBEDTLS_BACKEND=ON -DCRYPTO_BACKEND_DEFAULT=mbedtls .. && make -j
+# mbedTLS backend (no system OpenSSL required)
+cmake -DUSE_OPENSSL_BACKEND=OFF -DUSE_MBEDTLS_BACKEND=ON .. && make -j
 ```
 
 ## Run
@@ -126,9 +121,11 @@ Each encrypted message follows the structure:
 
 ## Architecture
 
-The implementation uses a modular crypto backend system:
-- `crypto_backend_custom_pqc.c`: Custom PQC implementation with ML-KEM-512
-- `crypto_backend.h`: Common interface for different crypto backends
-- `server.c` / `client.c`: Application logic
+The implementation is split into a clean primitives API and a single PQC channel backend:
+- `crypto_primitives.h`: Backend-agnostic API for HKDF-SHA256 and AES-256-GCM.
+- `crypto_primitives_openssl.c` and `crypto_primitives_mbedtls.c`: Per-backend implementations compiled exclusively based on CMake options.
+- `crypto_backend_custom_pqc.c`: The PQC channel (ML-KEM-512 handshake + AEAD framing) calling the primitives API with no `#ifdef`s.
+- `crypto_backend.h`: Public interface for the host crypto context.
+- `server.c` / `client.c`: Application logic.
 
-This design allows selecting OpenSSL or mbedTLS at build time (and switching at runtime via `crypto_set_operation_backend`) for HKDF and AES‑GCM, while using liboqs for the KEM.
+There is no runtime crypto backend switching; selection is compile-time only.
