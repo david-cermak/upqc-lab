@@ -17,7 +17,7 @@ set(kem_ref_SRCS
 
 list(TRANSFORM kem_ref_SRCS PREPEND "../../../impl/")
 
-idf_component_register(SRCS "target.c" "client.c" "crypto_backend_custom_pqc.c"
+idf_component_register(SRCS "target.c" "client.c" "crypto_backend_custom_pqc.c" "crypto_primitives_mbedtls.c"
         ${kem_ref_SRCS}
         randombytes.c
 #        "/home/david/repos/upqc-lab/impl/liboqs/src/kem/kem.c"

@@ -5,18 +5,10 @@
 #include <stdint.h>
 #include <stddef.h>
 
-// Backend types
+// Backend types (single custom PQC wrapper)
 typedef enum {
-    CRYPTO_BACKEND_CUSTOM_PQC,
-    CRYPTO_BACKEND_MBEDTLS,
-    CRYPTO_BACKEND_OPENSSL
+    CRYPTO_BACKEND_CUSTOM_PQC
 } crypto_backend_t;
-
-// Crypto operation backend types
-typedef enum {
-    CRYPTO_OP_BACKEND_OPENSSL,
-    CRYPTO_OP_BACKEND_MBEDTLS
-} crypto_op_backend_t;
 
 // Error codes
 typedef enum {
@@ -36,7 +28,6 @@ typedef enum {
 // Main crypto context structure
 typedef struct crypto_context {
     crypto_backend_t backend;
-    crypto_op_backend_t op_backend;  // Backend for crypto operations (HKDF, AES, etc.)
     void *backend_ctx;  // Backend-specific context
     int socket_fd;
     bool handshake_complete;
@@ -47,7 +38,6 @@ typedef struct crypto_context {
 
 // Core interface functions
 crypto_error_t crypto_init(crypto_context_t *ctx, crypto_backend_t backend, int socket_fd);
-crypto_error_t crypto_set_operation_backend(crypto_context_t *ctx, crypto_op_backend_t op_backend);
 crypto_error_t crypto_handshake_server(crypto_context_t *ctx);
 crypto_error_t crypto_handshake_client(crypto_context_t *ctx);
 crypto_error_t crypto_send_message(crypto_context_t *ctx, const uint8_t *data, size_t len);
@@ -57,7 +47,6 @@ crypto_error_t crypto_cleanup(crypto_context_t *ctx);
 // Utility functions
 const char* crypto_error_string(crypto_error_t error);
 bool crypto_is_handshake_complete(crypto_context_t *ctx);
-crypto_op_backend_t crypto_get_available_backends(void);
 
 // Backend-specific functions (for future TLS backends)
 crypto_error_t crypto_backend_custom_pqc_init(crypto_context_t *ctx);

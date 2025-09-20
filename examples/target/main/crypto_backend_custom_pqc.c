@@ -9,40 +9,9 @@
 #include <arpa/inet.h>
 #include <time.h>
 #include "esp_log.h"
+#include "crypto_primitives.h"
 
 #define TAG "pqc"
-#define USE_MBEDTLS_BACKEND
-
-// Conditional includes based on available backends
-#ifdef USE_OPENSSL_BACKEND
-#include <openssl/evp.h>
-#include <openssl/rand.h>
-#include <openssl/sha.h>
-#include <openssl/kdf.h>
-#include <openssl/params.h>
-#include <openssl/core_names.h>
-#endif
-
-#ifdef USE_MBEDTLS_BACKEND
-#include <mbedtls/cipher.h>
-#include <mbedtls/ctr_drbg.h>
-#include <mbedtls/entropy.h>
-#include <mbedtls/hkdf.h>
-#include <mbedtls/md.h>
-#include <mbedtls/platform.h>
-#include <mbedtls/gcm.h>
-#endif
-
-// Default backend selection
-#ifndef CRYPTO_BACKEND_DEFAULT_OPENSSL
-#ifndef CRYPTO_BACKEND_DEFAULT_MBEDTLS
-#ifdef USE_OPENSSL_BACKEND
-#define CRYPTO_BACKEND_DEFAULT_OPENSSL
-#elif defined(USE_MBEDTLS_BACKEND)
-#define CRYPTO_BACKEND_DEFAULT_MBEDTLS
-#endif
-#endif
-#endif
 
 // Message types for our custom protocol
 #define MSG_TYPE_PUBLIC_KEY    0x01
@@ -52,9 +21,9 @@
 
 // Protocol constants
 #define MAX_MESSAGE_SIZE       4096
-#define AES_KEY_SIZE           32
-#define AES_IV_SIZE            12
-#define AES_TAG_SIZE           16
+#define AES_KEY_SIZE           AES_GCM_KEY_SIZE
+#define AES_IV_SIZE            AES_GCM_IV_SIZE
+#define AES_TAG_SIZE           AES_GCM_TAG_SIZE
 #define SEQUENCE_SIZE          4
 #define TIMESTAMP_SIZE         8
 
@@ -68,51 +37,10 @@ typedef struct {
     uint8_t *aes_key;
     uint32_t sequence_number;
     uint32_t expected_sequence;
-    crypto_op_backend_t op_backend;  // Backend for crypto operations
-#ifdef USE_MBEDTLS_BACKEND
-    // RNG for IV generation when using mbedTLS AEAD
-    mbedtls_entropy_context entropy;
-    mbedtls_ctr_drbg_context ctr_drbg;
-    bool rng_initialized;
-#endif
 } custom_pqc_ctx_t;
 
 // Backend availability checking
-static crypto_op_backend_t get_available_backends(void) {
-    crypto_op_backend_t available = 0;
-#ifdef USE_OPENSSL_BACKEND
-    available |= (1 << CRYPTO_OP_BACKEND_OPENSSL);  // 1 << 0 = 1
-#endif
-#ifdef USE_MBEDTLS_BACKEND
-    available |= (1 << CRYPTO_OP_BACKEND_MBEDTLS);  // 1 << 1 = 2
-#endif
-    return available;
-}
-
-// Default backend selection
-static crypto_op_backend_t get_default_backend(void) {
-    printf("DEBUG: Backend selection logic:\n");
-#ifdef CRYPTO_BACKEND_DEFAULT_OPENSSL
-    printf("DEBUG: CRYPTO_BACKEND_DEFAULT_OPENSSL defined - using OpenSSL\n");
-    return CRYPTO_OP_BACKEND_OPENSSL;
-#elif defined(CRYPTO_BACKEND_DEFAULT_MBEDTLS)
-    printf("DEBUG: CRYPTO_BACKEND_DEFAULT_MBEDTLS defined - using mbedTLS\n");
-    return CRYPTO_OP_BACKEND_MBEDTLS;
-#else
-    printf("DEBUG: No default backend defined, using fallback logic\n");
-    // Fallback logic
-#ifdef USE_OPENSSL_BACKEND
-    printf("DEBUG: USE_OPENSSL_BACKEND defined - using OpenSSL\n");
-    return CRYPTO_OP_BACKEND_OPENSSL;
-#elif defined(USE_MBEDTLS_BACKEND)
-    printf("DEBUG: USE_MBEDTLS_BACKEND defined - using mbedTLS\n");
-    return CRYPTO_OP_BACKEND_MBEDTLS;
-#else
-    printf("DEBUG: No backend defined - defaulting to OpenSSL\n");
-    return CRYPTO_OP_BACKEND_OPENSSL; // Default fallback
-#endif
-#endif
-}
+// mbedTLS-only build: no backend selection
 
 // Helper function to send protocol message
 static crypto_error_t send_protocol_message(int socket_fd, uint8_t msg_type, const uint8_t *data, size_t len) {
@@ -233,58 +161,15 @@ static crypto_error_t derive_aes_key_openssl(const uint8_t *shared_secret, size_
 }
 #endif
 
-// mbedTLS HKDF implementation
-#ifdef USE_MBEDTLS_BACKEND
-static crypto_error_t derive_aes_key_mbedtls(const uint8_t *shared_secret, size_t shared_secret_len, uint8_t *aes_key) {
-    printf("DEBUG: Using mbedTLS backend for HKDF key derivation\n");
-    
-    const char *info = "PQC-TCP-AES-KEY";
-    const uint8_t *salt = (const uint8_t *)"PQC-TCP-SALT";
-    const size_t salt_len = 12;
-    const size_t info_len = strlen(info);
-    
-    int ret = mbedtls_hkdf(
-        mbedtls_md_info_from_type(MBEDTLS_MD_SHA256),
-        salt, salt_len,
-        shared_secret, shared_secret_len,
-        (const unsigned char *)info, info_len,
-        aes_key, AES_KEY_SIZE
-    );
-    
-    if (ret != 0) {
-        printf("DEBUG: mbedTLS HKDF key derivation failed: -0x%04x\n", -ret);
-        return CRYPTO_ERROR_INIT_FAILED;
-    }
-    
-    printf("DEBUG: mbedTLS HKDF key derivation successful\n");
-    printf("DEBUG: Derived AES key (first 8 bytes): ");
-    for (int i = 0; i < 8 && i < AES_KEY_SIZE; i++) {
-        printf("%02x ", aes_key[i]);
-    }
-    printf("\n");
-    
-    return CRYPTO_SUCCESS;
-}
-#endif
-
-// Unified HKDF interface
-static crypto_error_t derive_aes_key(const uint8_t *shared_secret, size_t shared_secret_len, uint8_t *aes_key, crypto_op_backend_t backend) {
-    printf("DEBUG: HKDF key derivation requested with backend: %s\n", 
-           (backend == CRYPTO_OP_BACKEND_OPENSSL) ? "OpenSSL" : "mbedTLS");
-    
-    switch (backend) {
-#ifdef USE_OPENSSL_BACKEND
-        case CRYPTO_OP_BACKEND_OPENSSL:
-            return derive_aes_key_openssl(shared_secret, shared_secret_len, aes_key);
-#endif
-#ifdef USE_MBEDTLS_BACKEND
-        case CRYPTO_OP_BACKEND_MBEDTLS:
-            return derive_aes_key_mbedtls(shared_secret, shared_secret_len, aes_key);
-#endif
-        default:
-            printf("DEBUG: Unsupported crypto backend for HKDF: %d\n", backend);
-            return CRYPTO_ERROR_BACKEND_NOT_AVAILABLE;
-    }
+// Unified HKDF helper (mbedTLS primitives)
+static crypto_error_t derive_aes_key(const uint8_t *shared_secret, size_t shared_secret_len, uint8_t *aes_key) {
+    const uint8_t salt[] = "PQC-TCP-SALT";
+    const uint8_t info[] = "PQC-TCP-AES-KEY";
+    int r = hkdf_sha256(shared_secret, shared_secret_len,
+                        salt, sizeof(salt) - 1,
+                        info, sizeof(info) - 1,
+                        aes_key, AES_KEY_SIZE);
+    return (r == 0) ? CRYPTO_SUCCESS : CRYPTO_ERROR_INIT_FAILED;
 }
 
 // Encrypt data with AES-256-GCM
@@ -484,160 +369,37 @@ static crypto_error_t decrypt_data_openssl(const uint8_t *aes_key, const uint8_t
 }
 #endif
 
-// mbedTLS AEAD implementation
-#ifdef USE_MBEDTLS_BACKEND
-static crypto_error_t encrypt_data_mbedtls(custom_pqc_ctx_t *pqc_ctx, const uint8_t *aes_key,
-                                           const uint8_t *plaintext, size_t plaintext_len,
-                                           uint8_t *ciphertext, size_t *ciphertext_len,
-                                           uint32_t sequence_number) {
-    printf("DEBUG: Starting mbedTLS encryption - plaintext_len=%zu, sequence_number=%u\n", plaintext_len, (int)sequence_number);
-
-    if (!pqc_ctx->rng_initialized) {
-        printf("DEBUG: mbedTLS RNG not initialized\n");
-        return CRYPTO_ERROR_ENCRYPT_FAILED;
-    }
-
-    mbedtls_gcm_context gcm;
-    mbedtls_gcm_init(&gcm);
-
-    int ret = mbedtls_gcm_setkey(&gcm, MBEDTLS_CIPHER_ID_AES, aes_key, 256);
-    if (ret != 0) {
-        printf("DEBUG: mbedTLS setkey failed: -0x%04x\n", -ret);
-        mbedtls_gcm_free(&gcm);
-        return CRYPTO_ERROR_ENCRYPT_FAILED;
-    }
-
-    // Generate random IV
-    uint8_t iv[AES_IV_SIZE];
-    ret = mbedtls_ctr_drbg_random(&pqc_ctx->ctr_drbg, iv, AES_IV_SIZE);
-    if (ret != 0) {
-        printf("DEBUG: mbedTLS IV generation failed: -0x%04x\n", -ret);
-        mbedtls_gcm_free(&gcm);
-        return CRYPTO_ERROR_ENCRYPT_FAILED;
-    }
-
+// AEAD helpers (mbedTLS primitives)
+static crypto_error_t encrypt_data(const uint8_t *aes_key,
+                                   const uint8_t *plaintext, size_t plaintext_len,
+                                   uint8_t *ciphertext, size_t *ciphertext_len,
+                                   uint32_t sequence_number) {
     uint8_t aad[SEQUENCE_SIZE];
     uint32_t net_seq = htonl(sequence_number);
     memcpy(aad, &net_seq, SEQUENCE_SIZE);
-
-    // Output layout: [IV][ciphertext][tag]
-    uint8_t *out = ciphertext;
-    memcpy(out, iv, AES_IV_SIZE);
-
-    uint8_t tag[AES_TAG_SIZE];
-
-    ret = mbedtls_gcm_crypt_and_tag(&gcm, MBEDTLS_GCM_ENCRYPT,
-                                    plaintext_len,
-                                    iv, AES_IV_SIZE,
-                                    aad, SEQUENCE_SIZE,
-                                    plaintext,
-                                    out + AES_IV_SIZE,
-                                    AES_TAG_SIZE,
-                                    tag);
-    if (ret != 0) {
-        printf("DEBUG: mbedTLS gcm_crypt_and_tag failed: -0x%04x\n", -ret);
-        mbedtls_gcm_free(&gcm);
-        return CRYPTO_ERROR_ENCRYPT_FAILED;
-    }
-
-    memcpy(out + AES_IV_SIZE + plaintext_len, tag, AES_TAG_SIZE);
-    *ciphertext_len = AES_IV_SIZE + plaintext_len + AES_TAG_SIZE;
-
-    mbedtls_gcm_free(&gcm);
-    printf("DEBUG: mbedTLS encryption completed successfully, final ciphertext_len=%zu\n", *ciphertext_len);
+    size_t out_len = 0;
+    int r = aead_aes256gcm_encrypt(aes_key, aad, sizeof(aad),
+                                   plaintext, plaintext_len,
+                                   ciphertext, &out_len);
+    if (r != 0) return CRYPTO_ERROR_ENCRYPT_FAILED;
+    *ciphertext_len = out_len;
     return CRYPTO_SUCCESS;
 }
 
-static crypto_error_t decrypt_data_mbedtls(const uint8_t *aes_key,
-                                           const uint8_t *ciphertext, size_t ciphertext_len,
-                                           uint8_t *plaintext, size_t *plaintext_len,
-                                           uint32_t expected_sequence) {
-    printf("DEBUG: Starting mbedTLS decryption - ciphertext_len=%zu, expected_sequence=%u\n", ciphertext_len, (int)expected_sequence);
-
-    if (ciphertext_len < AES_IV_SIZE + AES_TAG_SIZE) {
-        printf("DEBUG: Ciphertext too short: %zu < %d\n", ciphertext_len, AES_IV_SIZE + AES_TAG_SIZE);
-        return CRYPTO_ERROR_DECRYPT_FAILED;
-    }
-
-    const uint8_t *iv = ciphertext;
-    const uint8_t *tag = ciphertext + ciphertext_len - AES_TAG_SIZE;
-    const uint8_t *encrypted_data = ciphertext + AES_IV_SIZE;
-    size_t encrypted_len = ciphertext_len - AES_IV_SIZE - AES_TAG_SIZE;
-
-    mbedtls_gcm_context gcm;
-    mbedtls_gcm_init(&gcm);
-    int ret = mbedtls_gcm_setkey(&gcm, MBEDTLS_CIPHER_ID_AES, aes_key, 256);
-    if (ret != 0) {
-        printf("DEBUG: mbedTLS setkey failed: -0x%04x\n", -ret);
-        mbedtls_gcm_free(&gcm);
-        return CRYPTO_ERROR_DECRYPT_FAILED;
-    }
-
+static crypto_error_t decrypt_data(const uint8_t *aes_key,
+                                   const uint8_t *ciphertext, size_t ciphertext_len,
+                                   uint8_t *plaintext, size_t *plaintext_len,
+                                   uint32_t expected_sequence) {
     uint8_t aad[SEQUENCE_SIZE];
     uint32_t net_seq = htonl(expected_sequence);
     memcpy(aad, &net_seq, SEQUENCE_SIZE);
-
-    ret = mbedtls_gcm_auth_decrypt(&gcm,
-                                   encrypted_len,
-                                   iv, AES_IV_SIZE,
-                                   aad, SEQUENCE_SIZE,
-                                   tag, AES_TAG_SIZE,
-                                   encrypted_data,
-                                   plaintext);
-    if (ret != 0) {
-        printf("DEBUG: mbedTLS gcm_auth_decrypt failed: -0x%04x\n", -ret);
-        mbedtls_gcm_free(&gcm);
-        return CRYPTO_ERROR_DECRYPT_FAILED;
-    }
-
-    *plaintext_len = encrypted_len;
-    mbedtls_gcm_free(&gcm);
-    printf("DEBUG: mbedTLS decryption completed successfully, final plaintext_len=%zu\n", *plaintext_len);
+    size_t out_len = 0;
+    int r = aead_aes256gcm_decrypt(aes_key, aad, sizeof(aad),
+                                   ciphertext, ciphertext_len,
+                                   plaintext, &out_len);
+    if (r != 0) return CRYPTO_ERROR_DECRYPT_FAILED;
+    *plaintext_len = out_len;
     return CRYPTO_SUCCESS;
-}
-#endif
-
-// Unified AEAD interface
-static crypto_error_t encrypt_data(custom_pqc_ctx_t *pqc_ctx, const uint8_t *aes_key,
-                                   const uint8_t *plaintext, size_t plaintext_len,
-                                   uint8_t *ciphertext, size_t *ciphertext_len,
-                                   uint32_t sequence_number, crypto_op_backend_t backend) {
-    printf("DEBUG: AEAD encrypt requested with backend: %s\n",
-           (backend == CRYPTO_OP_BACKEND_OPENSSL) ? "OpenSSL" : "mbedTLS");
-    switch (backend) {
-#ifdef USE_OPENSSL_BACKEND
-        case CRYPTO_OP_BACKEND_OPENSSL:
-            return encrypt_data_openssl(aes_key, plaintext, plaintext_len, ciphertext, ciphertext_len, sequence_number);
-#endif
-#ifdef USE_MBEDTLS_BACKEND
-        case CRYPTO_OP_BACKEND_MBEDTLS:
-            return encrypt_data_mbedtls(pqc_ctx, aes_key, plaintext, plaintext_len, ciphertext, ciphertext_len, sequence_number);
-#endif
-        default:
-            printf("DEBUG: Unsupported crypto backend for AEAD encrypt: %d\n", backend);
-            return CRYPTO_ERROR_BACKEND_NOT_AVAILABLE;
-    }
-}
-
-static crypto_error_t decrypt_data(custom_pqc_ctx_t *pqc_ctx, const uint8_t *aes_key,
-                                   const uint8_t *ciphertext, size_t ciphertext_len,
-                                   uint8_t *plaintext, size_t *plaintext_len,
-                                   uint32_t expected_sequence, crypto_op_backend_t backend) {
-    printf("DEBUG: AEAD decrypt requested with backend: %s\n",
-           (backend == CRYPTO_OP_BACKEND_OPENSSL) ? "OpenSSL" : "mbedTLS");
-    switch (backend) {
-#ifdef USE_OPENSSL_BACKEND
-        case CRYPTO_OP_BACKEND_OPENSSL:
-            return decrypt_data_openssl(aes_key, ciphertext, ciphertext_len, plaintext, plaintext_len, expected_sequence);
-#endif
-#ifdef USE_MBEDTLS_BACKEND
-        case CRYPTO_OP_BACKEND_MBEDTLS:
-            return decrypt_data_mbedtls(aes_key, ciphertext, ciphertext_len, plaintext, plaintext_len, expected_sequence);
-#endif
-        default:
-            printf("DEBUG: Unsupported crypto backend for AEAD decrypt: %d\n", backend);
-            return CRYPTO_ERROR_BACKEND_NOT_AVAILABLE;
-    }
 }
 
 // Custom PQC backend implementation
@@ -657,32 +419,7 @@ crypto_error_t crypto_backend_custom_pqc_init(crypto_context_t *ctx) {
     
     memset(pqc_ctx, 0, sizeof(custom_pqc_ctx_t));
     
-    // Set default operation backend
-    pqc_ctx->op_backend = get_default_backend();
-    ctx->op_backend = pqc_ctx->op_backend;
-
-    printf("DEBUG: Selected crypto operation backend: %s\n", 
-           (pqc_ctx->op_backend == CRYPTO_OP_BACKEND_OPENSSL) ? "OpenSSL" : "mbedTLS");
-
-#ifdef USE_MBEDTLS_BACKEND
-    // Initialize RNG if using mbedTLS backend for operations (needed for IVs)
-    pqc_ctx->rng_initialized = false;
-    if (pqc_ctx->op_backend == CRYPTO_OP_BACKEND_MBEDTLS) {
-        const char *pers = "pqc-aes-gcm";
-        mbedtls_entropy_init(&pqc_ctx->entropy);
-        mbedtls_ctr_drbg_init(&pqc_ctx->ctr_drbg);
-        int ret = mbedtls_ctr_drbg_seed(&pqc_ctx->ctr_drbg, mbedtls_entropy_func, &pqc_ctx->entropy,
-                                        (const unsigned char *)pers, strlen(pers));
-        if (ret != 0) {
-            printf("DEBUG: mbedTLS RNG seed failed: -0x%04x\n", -ret);
-            mbedtls_ctr_drbg_free(&pqc_ctx->ctr_drbg);
-            mbedtls_entropy_free(&pqc_ctx->entropy);
-            free(pqc_ctx);
-            return CRYPTO_ERROR_INIT_FAILED;
-        }
-        pqc_ctx->rng_initialized = true;
-    }
-#endif
+    // No runtime backend selection on target
     
     // Initialize liboqs
     printf("DEBUG: Initializing liboqs\n");
@@ -767,7 +504,7 @@ crypto_error_t crypto_backend_custom_pqc_handshake_server(crypto_context_t *ctx)
     }
     
     // Derive AES key
-    err = derive_aes_key(pqc_ctx->shared_secret, pqc_ctx->kem->length_shared_secret, pqc_ctx->aes_key, pqc_ctx->op_backend);
+    err = derive_aes_key(pqc_ctx->shared_secret, pqc_ctx->kem->length_shared_secret, pqc_ctx->aes_key);
     if (err != CRYPTO_SUCCESS) {
         return err;
     }
@@ -811,7 +548,7 @@ crypto_error_t crypto_backend_custom_pqc_handshake_client(crypto_context_t *ctx)
     }
     
     // Derive AES key
-    err = derive_aes_key(pqc_ctx->shared_secret, pqc_ctx->kem->length_shared_secret, pqc_ctx->aes_key, pqc_ctx->op_backend);
+    err = derive_aes_key(pqc_ctx->shared_secret, pqc_ctx->kem->length_shared_secret, pqc_ctx->aes_key);
     if (err != CRYPTO_SUCCESS) {
         return err;
     }
@@ -832,7 +569,7 @@ crypto_error_t crypto_backend_custom_pqc_send_message(crypto_context_t *ctx, con
     // Encrypt data
     uint8_t encrypted_data[MAX_MESSAGE_SIZE];
     size_t encrypted_len;
-    crypto_error_t err = encrypt_data(pqc_ctx, pqc_ctx->aes_key, data, len, encrypted_data, &encrypted_len, ctx->sequence_number, pqc_ctx->op_backend);
+    crypto_error_t err = encrypt_data(pqc_ctx->aes_key, data, len, encrypted_data, &encrypted_len, ctx->sequence_number);
     if (err != CRYPTO_SUCCESS) {
         return err;
     }
@@ -864,7 +601,7 @@ crypto_error_t crypto_backend_custom_pqc_recv_message(crypto_context_t *ctx, uin
     }
     
     // Decrypt data using expected sequence number
-    err = decrypt_data(pqc_ctx, pqc_ctx->aes_key, encrypted_data, encrypted_len, data, len, pqc_ctx->expected_sequence, pqc_ctx->op_backend);
+    err = decrypt_data(pqc_ctx->aes_key, encrypted_data, encrypted_len, data, len, pqc_ctx->expected_sequence);
     if (err != CRYPTO_SUCCESS) {
         return err;
     }
@@ -900,13 +637,7 @@ crypto_error_t crypto_backend_custom_pqc_cleanup(crypto_context_t *ctx) {
         OQS_KEM_free(pqc_ctx->kem);
     }
 
-#ifdef USE_MBEDTLS_BACKEND
-    if (pqc_ctx->rng_initialized) {
-        mbedtls_ctr_drbg_free(&pqc_ctx->ctr_drbg);
-        mbedtls_entropy_free(&pqc_ctx->entropy);
-        pqc_ctx->rng_initialized = false;
-    }
-#endif
+    
 
     free(pqc_ctx);
     ctx->backend_ctx = NULL;
@@ -930,9 +661,6 @@ crypto_error_t crypto_init(crypto_context_t *ctx, crypto_backend_t backend, int 
     switch (backend) {
         case CRYPTO_BACKEND_CUSTOM_PQC:
             return crypto_backend_custom_pqc_init(ctx);
-        case CRYPTO_BACKEND_MBEDTLS:
-        case CRYPTO_BACKEND_OPENSSL:
-            return CRYPTO_ERROR_INIT_FAILED; // Not implemented yet
         default:
             return CRYPTO_ERROR_INVALID_PARAM;
     }
@@ -946,9 +674,6 @@ crypto_error_t crypto_handshake_server(crypto_context_t *ctx) {
     switch (ctx->backend) {
         case CRYPTO_BACKEND_CUSTOM_PQC:
             return crypto_backend_custom_pqc_handshake_server(ctx);
-        case CRYPTO_BACKEND_MBEDTLS:
-        case CRYPTO_BACKEND_OPENSSL:
-            return CRYPTO_ERROR_HANDSHAKE_FAILED; // Not implemented yet
         default:
             return CRYPTO_ERROR_INVALID_PARAM;
     }
@@ -962,9 +687,6 @@ crypto_error_t crypto_handshake_client(crypto_context_t *ctx) {
     switch (ctx->backend) {
         case CRYPTO_BACKEND_CUSTOM_PQC:
             return crypto_backend_custom_pqc_handshake_client(ctx);
-        case CRYPTO_BACKEND_MBEDTLS:
-        case CRYPTO_BACKEND_OPENSSL:
-            return CRYPTO_ERROR_HANDSHAKE_FAILED; // Not implemented yet
         default:
             return CRYPTO_ERROR_INVALID_PARAM;
     }
@@ -978,9 +700,6 @@ crypto_error_t crypto_send_message(crypto_context_t *ctx, const uint8_t *data, s
     switch (ctx->backend) {
         case CRYPTO_BACKEND_CUSTOM_PQC:
             return crypto_backend_custom_pqc_send_message(ctx, data, len);
-        case CRYPTO_BACKEND_MBEDTLS:
-        case CRYPTO_BACKEND_OPENSSL:
-            return CRYPTO_ERROR_SEND_FAILED; // Not implemented yet
         default:
             return CRYPTO_ERROR_INVALID_PARAM;
     }
@@ -994,9 +713,6 @@ crypto_error_t crypto_recv_message(crypto_context_t *ctx, uint8_t *data, size_t 
     switch (ctx->backend) {
         case CRYPTO_BACKEND_CUSTOM_PQC:
             return crypto_backend_custom_pqc_recv_message(ctx, data, len);
-        case CRYPTO_BACKEND_MBEDTLS:
-        case CRYPTO_BACKEND_OPENSSL:
-            return CRYPTO_ERROR_RECV_FAILED; // Not implemented yet
         default:
             return CRYPTO_ERROR_INVALID_PARAM;
     }
@@ -1010,9 +726,6 @@ crypto_error_t crypto_cleanup(crypto_context_t *ctx) {
     switch (ctx->backend) {
         case CRYPTO_BACKEND_CUSTOM_PQC:
             return crypto_backend_custom_pqc_cleanup(ctx);
-        case CRYPTO_BACKEND_MBEDTLS:
-        case CRYPTO_BACKEND_OPENSSL:
-            return CRYPTO_SUCCESS; // Nothing to cleanup
         default:
             return CRYPTO_SUCCESS;
     }
@@ -1039,49 +752,4 @@ bool crypto_is_handshake_complete(crypto_context_t *ctx) {
     return ctx != NULL && ctx->handshake_complete;
 }
 
-// Backend switching function
-crypto_error_t crypto_set_operation_backend(crypto_context_t *ctx, crypto_op_backend_t op_backend) {
-    if (ctx == NULL || ctx->backend_ctx == NULL) {
-        return CRYPTO_ERROR_INVALID_PARAM;
-    }
-    
-    custom_pqc_ctx_t *pqc_ctx = (custom_pqc_ctx_t *)ctx->backend_ctx;
-    
-    // Check if backend is available
-    crypto_op_backend_t available = get_available_backends();
-    if (!(available & (1 << op_backend))) {
-        printf("DEBUG: Requested backend %d not available (available: %d)\n", op_backend, available);
-        return CRYPTO_ERROR_BACKEND_NOT_AVAILABLE;
-    }
-    
-    pqc_ctx->op_backend = op_backend;
-    ctx->op_backend = op_backend;
-
-#ifdef USE_MBEDTLS_BACKEND
-    // Ensure RNG is initialized if switching to mbedTLS
-    if (op_backend == CRYPTO_OP_BACKEND_MBEDTLS && !pqc_ctx->rng_initialized) {
-        const char *pers = "pqc-aes-gcm";
-        mbedtls_entropy_init(&pqc_ctx->entropy);
-        mbedtls_ctr_drbg_init(&pqc_ctx->ctr_drbg);
-        int ret = mbedtls_ctr_drbg_seed(&pqc_ctx->ctr_drbg, mbedtls_entropy_func, &pqc_ctx->entropy,
-                                        (const unsigned char *)pers, strlen(pers));
-        if (ret != 0) {
-            printf("DEBUG: mbedTLS RNG seed (switch) failed: -0x%04x\n", -ret);
-            mbedtls_ctr_drbg_free(&pqc_ctx->ctr_drbg);
-            mbedtls_entropy_free(&pqc_ctx->entropy);
-            return CRYPTO_ERROR_INIT_FAILED;
-        }
-        pqc_ctx->rng_initialized = true;
-    }
-#endif
-    
-    printf("DEBUG: Switched crypto operation backend to: %s\n", 
-           (op_backend == CRYPTO_OP_BACKEND_OPENSSL) ? "OpenSSL" : "mbedTLS");
-    
-    return CRYPTO_SUCCESS;
-}
-
-// Get available backends
-crypto_op_backend_t crypto_get_available_backends(void) {
-    return get_available_backends();
-}
+// No runtime backend switching on target
