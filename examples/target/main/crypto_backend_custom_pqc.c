@@ -9,7 +9,9 @@
 #include <arpa/inet.h>
 #include <time.h>
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "crypto_primitives.h"
+#include "upqc_config.h"
 
 #define TAG "pqc"
 
@@ -425,17 +427,16 @@ crypto_error_t crypto_backend_custom_pqc_init(crypto_context_t *ctx) {
     printf("DEBUG: Initializing liboqs\n");
     OQS_init();
     
-    // Create ML-KEM-512 instance
-    printf("DEBUG: Creating ML-KEM-512 instance\n");
-    pqc_ctx->kem = OQS_KEM_new(OQS_KEM_alg_kyber_512);
-    // pqc_ctx->kem = OQS_KEM_new(OQS_KEM_alg_ml_kem_512);
+    // Create ML-KEM instance based on selected parameter set
+    printf("DEBUG: Creating %s instance\n", UPQC_KEM_NAME);
+    pqc_ctx->kem = OQS_KEM_new(UPQC_OQS_KEM_ALG);
     if (pqc_ctx->kem == NULL) {
-        printf("DEBUG: Failed to create ML-KEM-512 instance\n");
+        printf("DEBUG: Failed to create %s instance\n", UPQC_KEM_NAME);
         free(pqc_ctx);
         return CRYPTO_ERROR_INIT_FAILED;
     }
     
-    printf("DEBUG: ML-KEM-512 instance created successfully\n");
+    printf("DEBUG: %s instance created successfully\n", UPQC_KEM_NAME);
     
     // Allocate memory for keys
     printf("DEBUG: Allocating memory for keys\n");
@@ -533,13 +534,14 @@ crypto_error_t crypto_backend_custom_pqc_handshake_client(crypto_context_t *ctx)
         return CRYPTO_ERROR_HANDSHAKE_FAILED;
     }
     
-    // Encapsulate shared secret
-    ESP_LOGI(TAG, "Before encapsulation");
+    // Encapsulate shared secret with esp_timer-based timing
+    int64_t t0 = esp_timer_get_time();
     OQS_STATUS rc = OQS_KEM_encaps(pqc_ctx->kem, pqc_ctx->ciphertext, pqc_ctx->shared_secret, pqc_ctx->public_key);
+    int64_t dt_us = esp_timer_get_time() - t0;
+    ESP_LOGI(TAG, "Encaps time: %lld us (%.3f ms)", (long long)dt_us, (double)dt_us / 1000.0);
     if (rc != OQS_SUCCESS) {
         return CRYPTO_ERROR_HANDSHAKE_FAILED;
     }
-    ESP_LOGI(TAG, "After encapsulation");
     // Send ciphertext to server
     err = send_protocol_message(ctx->socket_fd, MSG_TYPE_CIPHERTEXT, 
                                pqc_ctx->ciphertext, pqc_ctx->kem->length_ciphertext);

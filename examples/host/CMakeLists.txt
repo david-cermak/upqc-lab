@@ -12,8 +12,17 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra")
 option(USE_OPENSSL_BACKEND "Use OpenSSL as crypto backend" ON)
 option(USE_MBEDTLS_BACKEND "Use mbedTLS as crypto backend" OFF)
 
+# KEM parameter selection (shared with target)
+set(UPQC_KEM_LEVEL "512" CACHE STRING "Select ML-KEM parameter set: 512 or 768")
+set_property(CACHE UPQC_KEM_LEVEL PROPERTY STRINGS 512 768)
+
 # Configure liboqs build options
-set(OQS_MINIMAL_BUILD "" CACHE STRING "Build all algorithms")
+# Restrict to the selected ML-KEM to reduce build time
+if(UPQC_KEM_LEVEL STREQUAL "768")
+    set(OQS_MINIMAL_BUILD "ML-KEM-768" CACHE STRING "Only build selected ML-KEM algorithm")
+else()
+    set(OQS_MINIMAL_BUILD "ML-KEM-512" CACHE STRING "Only build selected ML-KEM algorithm")
+endif()
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build static library")
 set(OQS_DIST_BUILD OFF CACHE BOOL "Disable platform-specific optimizations for portability")
 set(OQS_BUILD_ONLY_LIB ON CACHE BOOL "Build only liboqs library, no tests or examples")
@@ -23,6 +32,8 @@ add_subdirectory(../../impl/liboqs liboqs)
 
 # Include liboqs headers globally (must be before add_executable)
 include_directories(${CMAKE_BINARY_DIR}/liboqs/include)
+# Include shared config header
+include_directories(../shared)
 
 # Backend-specific configuration
 if(USE_OPENSSL_BACKEND)
@@ -82,6 +93,10 @@ endif()
 target_include_directories(server PRIVATE ../../impl/liboqs/src)
 target_include_directories(client PRIVATE ../../impl/liboqs/src)
 # target_include_directories(test_backends PRIVATE ../../impl/liboqs/src)
+
+# Propagate selected KEM level to sources
+target_compile_definitions(server PRIVATE UPQC_KEM_LEVEL=${UPQC_KEM_LEVEL})
+target_compile_definitions(client PRIVATE UPQC_KEM_LEVEL=${UPQC_KEM_LEVEL})
 
 # Optional: Set output directory
 set_target_properties(server client PROPERTIES

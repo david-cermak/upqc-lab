@@ -8,6 +8,7 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <time.h>
+#include "upqc_config.h"
 
 // Backend-agnostic primitives (implemented per backend at compile time)
 #include "crypto_primitives.h"
@@ -175,16 +176,16 @@ crypto_error_t crypto_backend_custom_pqc_init(crypto_context_t *ctx) {
     printf("DEBUG: Initializing liboqs\n");
     OQS_init();
     
-    // Create ML-KEM-512 instance
-    printf("DEBUG: Creating ML-KEM-512 instance\n");
-    pqc_ctx->kem = OQS_KEM_new(OQS_KEM_alg_ml_kem_512);
+    // Create ML-KEM instance based on selected parameter set
+    printf("DEBUG: Creating %s instance\n", UPQC_KEM_NAME);
+    pqc_ctx->kem = OQS_KEM_new(UPQC_OQS_KEM_ALG);
     if (pqc_ctx->kem == NULL) {
-        printf("DEBUG: Failed to create ML-KEM-512 instance\n");
+        printf("DEBUG: Failed to create %s instance\n", UPQC_KEM_NAME);
         free(pqc_ctx);
         return CRYPTO_ERROR_INIT_FAILED;
     }
     
-    printf("DEBUG: ML-KEM-512 instance created successfully\n");
+    printf("DEBUG: %s instance created successfully\n", UPQC_KEM_NAME);
     
     // Allocate memory for keys
     printf("DEBUG: Allocating memory for keys\n");

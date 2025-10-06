@@ -6,6 +6,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include "crypto_backend.h"
+#include "upqc_config.h"
 
 #define PORT 3333
 #define BUFFER_SIZE 1024
@@ -68,8 +69,8 @@ int main() {
         return EXIT_FAILURE;
     }
 
-    // Perform ML-KEM-512 handshake
-    printf("Performing ML-KEM-512 handshake...\n");
+    // Perform handshake using selected ML-KEM parameter set
+    printf("Performing %s handshake...\n", UPQC_KEM_NAME);
     err = crypto_handshake_server(&crypto_ctx);
     if (err != CRYPTO_SUCCESS) {
         printf("Handshake failed: %s\n", crypto_error_string(err));

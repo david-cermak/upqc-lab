@@ -1,10 +1,10 @@
 # PQC Lab TCP Example
 
-A complete TCP server and client application demonstrating post-quantum cryptography (PQC) with ML-KEM-512 key exchange and AES-256-GCM authenticated encryption.
+A complete TCP server and client application demonstrating post-quantum cryptography (PQC) with ML‑KEM‑512/768 key exchange and AES‑256‑GCM authenticated encryption.
 
 ## Features
 
-- **Post-Quantum Key Exchange**: ML-KEM-512 (Kyber) for secure key establishment
+- **Post-Quantum Key Exchange**: ML‑KEM‑512 or ML‑KEM‑768 (Kyber)
 - **Authenticated Encryption**: AES-256-GCM for message confidentiality and integrity
 - **Key Derivation**: HKDF (HMAC-based Key Derivation Function) for symmetric key generation
 - **Sequence Numbers**: Protection against replay attacks
@@ -31,10 +31,10 @@ Examples:
 
 ```bash
 # OpenSSL backend (default)
-cmake -DUSE_OPENSSL_BACKEND=ON -DUSE_MBEDTLS_BACKEND=OFF .. && make -j
+cmake -DUSE_OPENSSL_BACKEND=ON -DUSE_MBEDTLS_BACKEND=OFF -DUPQC_KEM_LEVEL=512 .. && make -j
 
 # mbedTLS backend (no system OpenSSL required)
-cmake -DUSE_OPENSSL_BACKEND=OFF -DUSE_MBEDTLS_BACKEND=ON .. && make -j
+cmake -DUSE_OPENSSL_BACKEND=OFF -DUSE_MBEDTLS_BACKEND=ON -DUPQC_KEM_LEVEL=512 .. && make -j
 ```
 
 ## Run

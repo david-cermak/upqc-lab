@@ -6,6 +6,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include "crypto_backend.h"
+#include "upqc_config.h"
 #include "esp_log.h"
 
 #define TAG "client"
@@ -54,8 +55,8 @@ int client_main()
         return EXIT_FAILURE;
     }
 
-    // Perform ML-KEM-512 handshake
-    ESP_LOGW(TAG, "Performing ML-KEM-512 handshake...\n");
+    // Perform handshake using selected ML-KEM parameter set
+    ESP_LOGW(TAG, "Performing %s handshake...\n", UPQC_KEM_NAME);
     err = crypto_handshake_client(&crypto_ctx);
     if (err != CRYPTO_SUCCESS) {
         printf("Handshake failed: %s\n", crypto_error_string(err));
