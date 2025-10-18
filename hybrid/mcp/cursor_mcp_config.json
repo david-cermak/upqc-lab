@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "hybrid-pqc-tester": {
+      "command": "/home/david/repos/upqc-lab/hybrid/mcp/venv/bin/python",
+      "args": ["/home/david/repos/upqc-lab/hybrid/mcp/fast_server.py"],
+      "env": {
+        "PATH": "/home/david/ossl-3.5/bin:/usr/local/bin:/usr/bin:/bin",
+        "LD_LIBRARY_PATH": "/home/david/ossl-3.5/lib64:/home/david/ossl-3.5/lib"
+      }
+    }
+  }
+}

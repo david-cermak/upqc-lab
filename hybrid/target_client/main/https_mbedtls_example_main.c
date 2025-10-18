@@ -106,9 +106,15 @@ static void https_get_task(void *pvParameters)
         goto exit;
     }
 
+    // Add debug info about supported groups
+    ESP_LOGI(TAG, "Configuring SSL/TLS for hybrid PQC testing...");
+
     mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_NONE);
     mbedtls_ssl_conf_ca_chain(&conf, &cacert, NULL);
     mbedtls_ssl_conf_rng(&conf, mbedtls_ctr_drbg_random, &ctr_drbg);
+    
+    // Add debug info about SSL configuration
+    ESP_LOGI(TAG, "SSL config: authmode=VERIFY_NONE, transport=STREAM");
 #ifdef CONFIG_MBEDTLS_DEBUG
     mbedtls_esp_enable_debug_log(&conf, CONFIG_MBEDTLS_DEBUG_LEVEL);
 #endif
@@ -137,14 +143,23 @@ static void https_get_task(void *pvParameters)
 
         ESP_LOGI(TAG, "Performing the SSL/TLS handshake...");
 
+        int handshake_attempts = 0;
         while ((ret = mbedtls_ssl_handshake(&ssl)) != 0)
         {
+            handshake_attempts++;
             if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE)
             {
-                ESP_LOGE(TAG, "mbedtls_ssl_handshake returned -0x%x", -ret);
+                ESP_LOGE(TAG, "mbedtls_ssl_handshake returned -0x%x (attempt %d)", -ret, handshake_attempts);
+                ESP_LOGE(TAG, "Handshake failed - likely group/cipher suite incompatibility");
+                goto exit;
+            }
+            if (handshake_attempts > 10) {
+                ESP_LOGE(TAG, "Handshake timeout after %d attempts", handshake_attempts);
                 goto exit;
             }
         }
+        
+        ESP_LOGI(TAG, "Handshake completed successfully after %d attempts", handshake_attempts);
 
         ESP_LOGI(TAG, "Verifying peer X.509 certificate...");
 
@@ -187,7 +202,6 @@ static void https_get_task(void *pvParameters)
             ret = mbedtls_ssl_read(&ssl, (unsigned char *)buf, len);
 
 #if CONFIG_MBEDTLS_SSL_PROTO_TLS1_3 && CONFIG_MBEDTLS_CLIENT_SSL_SESSION_TICKETS
-kkk
             if (ret == MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET) {
                 ESP_LOGD(TAG, "got session ticket in TLS 1.3 connection, retry read");
                 continue;
@@ -236,18 +250,16 @@ kkk
 
         static int request_count;
         ESP_LOGI(TAG, "Completed %d requests", ++request_count);
-        ESP_LOGI(TAG, "Minimum free heap size: %" PRIu32 " bytes\n", esp_get_minimum_free_heap_size());
-
-        for (int countdown = 10; countdown >= 0; countdown--) {
-            ESP_LOGI(TAG, "%d...", countdown);
-            vTaskDelay(1000 / portTICK_PERIOD_MS);
-        }
-        ESP_LOGI(TAG, "Starting again!");
+        
+        // Brief delay before retry
+        vTaskDelay(2000 / portTICK_PERIOD_MS);
+        ESP_LOGI(TAG, "Retrying connection...");
     }
 }
 
 void app_main(void)
 {
+    printf("hello-world\n");
     ESP_ERROR_CHECK( nvs_flash_init() );
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
