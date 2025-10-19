@@ -113,6 +113,10 @@ static void https_get_task(void *pvParameters)
     mbedtls_ssl_conf_ca_chain(&conf, &cacert, NULL);
     mbedtls_ssl_conf_rng(&conf, mbedtls_ctr_drbg_random, &ctr_drbg);
     
+    // Force TLS 1.3 for hybrid PQC groups
+    mbedtls_ssl_conf_min_tls_version(&conf, MBEDTLS_SSL_VERSION_TLS1_3);
+    mbedtls_ssl_conf_max_tls_version(&conf, MBEDTLS_SSL_VERSION_TLS1_3);
+    
     // Add debug info about SSL configuration
     ESP_LOGI(TAG, "SSL config: authmode=VERIFY_NONE, transport=STREAM");
 #ifdef CONFIG_MBEDTLS_DEBUG

@@ -19,7 +19,37 @@ Successfully establish a TLS 1.3 connection between an OpenSSL 3.5+ server using
 - [x] Implement build error detection and reporting
 - [x] Create comprehensive test output capture
 
-## Current Status: Ready for Implementation
+## ✅ Phase 2.5: TLS Version Fix (COMPLETED)
+- [x] **TLS 1.3 Negotiation Fixed**: Client now successfully negotiates TLS 1.3 instead of falling back to TLS 1.2
+- [x] **Runtime Configuration**: Added explicit TLS version configuration in client code
+- [x] **Version Constants**: Used correct `MBEDTLS_SSL_VERSION_TLS1_3` constants
+- [x] **Verification**: Server logs confirm TLS 1.3 handshake processing
+
+## ✅ Phase 3: Group Negotiation Investigation (COMPLETED)
+
+### Breakthrough Findings
+- **✅ TLS 1.3 Working**: Client successfully negotiates TLS 1.3 with server
+- **✅ Group Processing**: Client internally processes X25519MLKEM768 (0x11EC) group
+- **✅ Group Propagation**: X25519MLKEM768 group now successfully sent over wire
+- **✅ Server Reception**: Server receives and processes the hybrid group
+
+### Evidence
+1. **Client printf output**: `*** SIMPLE PRINTF: WRITING GROUP TO WIRE: 0x11ec ***`
+2. **Server hex dump**: Shows `11 ec` in supported groups extension: `00 33 00 26 00 24 11 ec 00 20`
+3. **TLS 1.3 confirmation**: Server logs show `<<< TLS 1.3, Handshake [length 00d3], ClientHello`
+4. **Error Progression**: Changed from `fatal handshake_failure` to `fatal illegal_parameter`
+
+### Root Cause Resolution
+- **Problem**: `mbedtls_ssl_tls13_named_group_is_ecdhe` didn't recognize X25519MLKEM768
+- **Solution**: Added X25519MLKEM768 to ECDHE group recognition function
+- **Additional Fix**: Added X25519MLKEM768 to `tls_id_match_table` in `ssl_tls.c`
+- **Result**: Group now successfully propagates through entire mbedTLS stack
+
+## 🎯 Phase 4: Key Exchange Implementation (NEXT)
+- **Current Status**: Group negotiation successful, handshake progresses to key exchange
+- **New Error**: `fatal illegal_parameter` indicates key share data issue
+- **Next Step**: Implement key share generation for X25519MLKEM768 hybrid group
+- **Goal**: Complete successful TLS 1.3 handshake with hybrid PQC groups
 
 ### Testing Tools Available
 1. **MCP Server** (`/home/david/repos/upqc-lab/hybrid/mcp/fast_server.py`)
@@ -33,11 +63,10 @@ Successfully establish a TLS 1.3 connection between an OpenSSL 3.5+ server using
    - `run_server.sh` - OpenSSL server only
    - `run_client.sh` - ESP32 client only
 
-3. **Test Results**
-   - ✅ Build process working correctly
-   - ✅ OpenSSL server starts with X25519MLKEM768
-   - ✅ ESP32 client connects and attempts handshake
-   - ✅ Expected handshake failure due to group incompatibility
+3. **Debug Infrastructure**
+   - ✅ printf statements in `ssl_client.c` for group processing tracking
+   - ✅ Server hex dump analysis for group presence verification
+   - ✅ TLS version negotiation confirmation
 
 ## 🎯 Phase 3: X25519MLKEM768 Implementation
 
