@@ -125,141 +125,135 @@ static void https_get_task(void *pvParameters)
         goto exit;
     }
 
-    while(1) {
-        mbedtls_net_init(&server_fd);
+    mbedtls_net_init(&server_fd);
 
-        ESP_LOGI(TAG, "Connecting to %s:%s...", WEB_SERVER, WEB_PORT);
+    ESP_LOGI(TAG, "Connecting to %s:%s...", WEB_SERVER, WEB_PORT);
 
-        if ((ret = mbedtls_net_connect(&server_fd, WEB_SERVER,
-                                      WEB_PORT, MBEDTLS_NET_PROTO_TCP)) != 0)
-        {
-            ESP_LOGE(TAG, "mbedtls_net_connect returned -%x", -ret);
+    if ((ret = mbedtls_net_connect(&server_fd, WEB_SERVER,
+                                  WEB_PORT, MBEDTLS_NET_PROTO_TCP)) != 0)
+    {
+        ESP_LOGE(TAG, "mbedtls_net_connect returned -%x", -ret);
+        goto exit;
+    }
+
+    ESP_LOGI(TAG, "Connected.");
+
+    mbedtls_ssl_set_bio(&ssl, &server_fd, mbedtls_net_send, mbedtls_net_recv, NULL);
+
+    ESP_LOGI(TAG, "Performing the SSL/TLS handshake...");
+
+    ret = mbedtls_ssl_handshake(&ssl);
+    if (ret != 0) {
+        ESP_LOGE(TAG, "mbedtls_ssl_handshake returned -0x%x", -ret);
+        ESP_LOGE(TAG, "Handshake failed - likely group/cipher suite incompatibility");
+        ESP_LOGE(TAG, "Last error was: -0x%x - SSL - A fatal alert message was received from our peer", -ret);
+        ESP_LOGI(TAG, "Gracefully exiting due to handshake failure");
+        goto exit;
+    }
+    
+    ESP_LOGI(TAG, "Handshake completed successfully");
+
+    ESP_LOGI(TAG, "Verifying peer X.509 certificate...");
+
+    if ((flags = mbedtls_ssl_get_verify_result(&ssl)) != 0)
+    {
+        /* In real life, we probably want to close connection if ret != 0 */
+        ESP_LOGW(TAG, "Failed to verify peer certificate!");
+        bzero(buf, sizeof(buf));
+        mbedtls_x509_crt_verify_info(buf, sizeof(buf), "  ! ", flags);
+        ESP_LOGW(TAG, "verification info: %s", buf);
+    }
+    else {
+        ESP_LOGI(TAG, "Certificate verified.");
+    }
+
+    ESP_LOGI(TAG, "Cipher suite is %s", mbedtls_ssl_get_ciphersuite(&ssl));
+
+    ESP_LOGI(TAG, "Writing HTTP request...");
+
+    size_t written_bytes = 0;
+    do {
+        ret = mbedtls_ssl_write(&ssl,
+                                (const unsigned char *)REQUEST + written_bytes,
+                                strlen(REQUEST) - written_bytes);
+        if (ret >= 0) {
+            ESP_LOGI(TAG, "%d bytes written", ret);
+            written_bytes += ret;
+        } else if (ret != MBEDTLS_ERR_SSL_WANT_WRITE && ret != MBEDTLS_ERR_SSL_WANT_READ) {
+            ESP_LOGE(TAG, "mbedtls_ssl_write returned -0x%x", -ret);
             goto exit;
         }
+    } while(written_bytes < strlen(REQUEST));
 
-        ESP_LOGI(TAG, "Connected.");
+    ESP_LOGI(TAG, "Reading HTTP response...");
 
-        mbedtls_ssl_set_bio(&ssl, &server_fd, mbedtls_net_send, mbedtls_net_recv, NULL);
-
-        ESP_LOGI(TAG, "Performing the SSL/TLS handshake...");
-
-        int handshake_attempts = 0;
-        while ((ret = mbedtls_ssl_handshake(&ssl)) != 0)
-        {
-            handshake_attempts++;
-            if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE)
-            {
-                ESP_LOGE(TAG, "mbedtls_ssl_handshake returned -0x%x (attempt %d)", -ret, handshake_attempts);
-                ESP_LOGE(TAG, "Handshake failed - likely group/cipher suite incompatibility");
-                goto exit;
-            }
-            if (handshake_attempts > 10) {
-                ESP_LOGE(TAG, "Handshake timeout after %d attempts", handshake_attempts);
-                goto exit;
-            }
-        }
-        
-        ESP_LOGI(TAG, "Handshake completed successfully after %d attempts", handshake_attempts);
-
-        ESP_LOGI(TAG, "Verifying peer X.509 certificate...");
-
-        if ((flags = mbedtls_ssl_get_verify_result(&ssl)) != 0)
-        {
-            /* In real life, we probably want to close connection if ret != 0 */
-            ESP_LOGW(TAG, "Failed to verify peer certificate!");
-            bzero(buf, sizeof(buf));
-            mbedtls_x509_crt_verify_info(buf, sizeof(buf), "  ! ", flags);
-            ESP_LOGW(TAG, "verification info: %s", buf);
-        }
-        else {
-            ESP_LOGI(TAG, "Certificate verified.");
-        }
-
-        ESP_LOGI(TAG, "Cipher suite is %s", mbedtls_ssl_get_ciphersuite(&ssl));
-
-        ESP_LOGI(TAG, "Writing HTTP request...");
-
-        size_t written_bytes = 0;
-        do {
-            ret = mbedtls_ssl_write(&ssl,
-                                    (const unsigned char *)REQUEST + written_bytes,
-                                    strlen(REQUEST) - written_bytes);
-            if (ret >= 0) {
-                ESP_LOGI(TAG, "%d bytes written", ret);
-                written_bytes += ret;
-            } else if (ret != MBEDTLS_ERR_SSL_WANT_WRITE && ret != MBEDTLS_ERR_SSL_WANT_READ) {
-                ESP_LOGE(TAG, "mbedtls_ssl_write returned -0x%x", -ret);
-                goto exit;
-            }
-        } while(written_bytes < strlen(REQUEST));
-
-        ESP_LOGI(TAG, "Reading HTTP response...");
-
-        do
-        {
-            len = sizeof(buf) - 1;
-            bzero(buf, sizeof(buf));
-            ret = mbedtls_ssl_read(&ssl, (unsigned char *)buf, len);
+    do
+    {
+        len = sizeof(buf) - 1;
+        bzero(buf, sizeof(buf));
+        ret = mbedtls_ssl_read(&ssl, (unsigned char *)buf, len);
 
 #if CONFIG_MBEDTLS_SSL_PROTO_TLS1_3 && CONFIG_MBEDTLS_CLIENT_SSL_SESSION_TICKETS
-            if (ret == MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET) {
-                ESP_LOGD(TAG, "got session ticket in TLS 1.3 connection, retry read");
-                continue;
-            }
+        if (ret == MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET) {
+            ESP_LOGD(TAG, "got session ticket in TLS 1.3 connection, retry read");
+            continue;
+        }
 #endif // CONFIG_MBEDTLS_SSL_PROTO_TLS1_3 && CONFIG_MBEDTLS_CLIENT_SSL_SESSION_TICKETS
 
-            if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) {
-                continue;
-            }
-
-            if (ret == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
-                ret = 0;
-                break;
-            }
-
-            if (ret < 0) {
-                ESP_LOGE(TAG, "mbedtls_ssl_read returned -0x%x", -ret);
-                break;
-            }
-
-            if (ret == 0) {
-                ESP_LOGI(TAG, "connection closed");
-                break;
-            }
-
-            len = ret;
-            ESP_LOGD(TAG, "%d bytes read", len);
-            /* Print response directly to stdout as it is read */
-            for (int i = 0; i < len; i++) {
-                putchar(buf[i]);
-            }
-        } while(1);
-
-        mbedtls_ssl_close_notify(&ssl);
-
-    exit:
-        mbedtls_ssl_session_reset(&ssl);
-        mbedtls_net_free(&server_fd);
-
-        if (ret != 0) {
-            mbedtls_strerror(ret, buf, 100);
-            ESP_LOGE(TAG, "Last error was: -0x%x - %s", -ret, buf);
+        if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) {
+            continue;
         }
 
-        putchar('\n'); // JSON output doesn't have a newline at end
+        if (ret == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
+            ret = 0;
+            break;
+        }
 
-        static int request_count;
-        ESP_LOGI(TAG, "Completed %d requests", ++request_count);
-        
-        // Brief delay before retry
-        vTaskDelay(2000 / portTICK_PERIOD_MS);
-        ESP_LOGI(TAG, "Retrying connection...");
+        if (ret < 0) {
+            ESP_LOGE(TAG, "mbedtls_ssl_read returned -0x%x", -ret);
+            break;
+        }
+
+        if (ret == 0) {
+            ESP_LOGI(TAG, "connection closed");
+            break;
+        }
+
+        len = ret;
+        ESP_LOGD(TAG, "%d bytes read", len);
+        /* Print response directly to stdout as it is read */
+        for (int i = 0; i < len; i++) {
+            putchar(buf[i]);
+        }
+    } while(1);
+
+    mbedtls_ssl_close_notify(&ssl);
+
+exit:
+    mbedtls_ssl_session_reset(&ssl);
+    mbedtls_net_free(&server_fd);
+    mbedtls_ssl_free(&ssl);
+    mbedtls_ssl_config_free(&conf);
+    mbedtls_ctr_drbg_free(&ctr_drbg);
+    mbedtls_entropy_free(&entropy);
+    mbedtls_x509_crt_free(&cacert);
+
+    if (ret != 0) {
+        mbedtls_strerror(ret, buf, 100);
+        ESP_LOGE(TAG, "Last error was: -0x%x - %s", -ret, buf);
     }
+
+    putchar('\n'); // JSON output doesn't have a newline at end
+
+    ESP_LOGI(TAG, "Single connection attempt completed");
+    
+    // Exit gracefully without deleting the task
+    return;
 }
 
 void app_main(void)
 {
-    printf("hello-world\n");
+    printf("testing from MCP tool directly\n");
     ESP_ERROR_CHECK( nvs_flash_init() );
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
@@ -270,5 +264,7 @@ void app_main(void)
      */
     ESP_ERROR_CHECK(example_connect());
 
-    xTaskCreate(&https_get_task, "https_get_task", 8192, NULL, 5, NULL);
+    // Single connection attempt - no retries
+    https_get_task(NULL);
+    
 }

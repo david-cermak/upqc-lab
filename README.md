@@ -1,6 +1,10 @@
 # upqc-lab
 A playground for post-quantum cryptography (PQC) on embedded systems and edge devices
 
+## Description
+
+This repository serves as a comprehensive research and development platform for post-quantum cryptography implementation on embedded systems and edge devices. It includes working examples, hybrid PQC implementations, and testing frameworks for evaluating quantum-resistant cryptographic algorithms in resource-constrained environments.
+
 ## Overview
 
 Post-quantum cryptography (PQC) has emerged as a critical security technology as organizations prepare for the quantum computing threat. With NIST's finalization of the first PQC standards in August 2024, the field is rapidly transitioning from research to practical implementation, particularly in embedded systems and edge devices where resource constraints present unique challenges.
@@ -125,4 +129,73 @@ Runtime switching is available via `crypto_set_operation_backend(...)` in the ex
 ## Agent‑Specific Instructions
 - Do not edit generated files (e.g., `examples/host/build/*`).
 - Prefer minimal diffs consistent with current structure; update docs when behavior changes.
+
+## How to Run
+
+### Main Application (MCP Server)
+
+To run the main MCP server for hybrid PQC testing:
+
+```bash
+cd hybrid/mcp
+python fast_server.py
+```
+
+This starts the Model Context Protocol (MCP) server that provides tools for running fast hybrid PQC TLS tests between OpenSSL server and mbedTLS client.
+
+### Host Demo (C/C++)
+
+To run the C/C++ host demo:
+
+```bash
+cd examples/host && mkdir -p build && cd build
+cmake -DCRYPTO_BACKEND_DEFAULT=openssl .. && make -j
+# Run server in one terminal
+./bin/server
+# Run client in another terminal  
+./bin/client
+```
+
+### ESP32 Target
+
+To build and flash the ESP32 target:
+
+```bash
+cd examples/target
+idf.py build flash monitor
+```
+
+## How to Test
+
+### MCP Server Testing
+
+To test the MCP server functionality:
+
+```bash
+cd hybrid/mcp
+python test_mcp.py
+```
+
+This runs a comprehensive test of the hybrid PQC TLS implementation, including:
+- OpenSSL server startup
+- mbedTLS client build and execution
+- Handshake testing
+- Output collection and analysis
+
+### Host Demo Testing
+
+To run the backend tests:
+
+```bash
+cd examples/host/build
+./bin/test_backends
+```
+
+### Unit Testing
+
+Add focused unit tests as `test_*.c` files next to source files and wire them in `examples/host/CMakeLists.txt`. Tests should cover:
+- New crypto paths
+- Error handling
+- Backend selection logic
+- Performance benchmarks
 

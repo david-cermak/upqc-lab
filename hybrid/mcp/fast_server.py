@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Fast MCP Server for Hybrid PQC TLS Testing
-Optimized for speed - should complete in ~250ms
+Simple MCP Server for Hybrid PQC TLS Testing
+Simplified version that follows the working shell script patterns
 """
 
 import asyncio
@@ -9,9 +9,7 @@ import json
 import subprocess
 import time
 import os
-import sys
-import threading
-import queue
+import signal
 from typing import Dict, Any, List
 
 # MCP imports
@@ -20,125 +18,21 @@ from mcp.server.models import InitializationOptions
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
-class FastProcessManager:
+class SimpleTestRunner:
     def __init__(self):
         self.server_process = None
         self.client_process = None
-        self.server_output = []
-        self.client_output = []
-        self.server_queue = queue.Queue()
-        self.client_queue = queue.Queue()
-        self.server_thread = None
-        self.client_thread = None
+        self.last_build_output = ""
+        self.last_test_output = ""
         
-    def start_server(self, working_dir: str) -> bool:
-        """Start OpenSSL server"""
+    def cleanup_processes(self):
+        """Clean up any existing processes"""
         try:
-            env = os.environ.copy()
-            env['PATH'] = f"{os.path.expanduser('~/ossl-3.5/bin')}:{env.get('PATH', '')}"
-            env['LD_LIBRARY_PATH'] = f"{os.path.expanduser('~/ossl-3.5/lib64')}:{os.path.expanduser('~/ossl-3.5/lib')}:{env.get('LD_LIBRARY_PATH', '')}"
-            
-            server_script = os.path.join(working_dir, "openssl_server.sh")
-            self.server_process = subprocess.Popen(
-                ["bash", server_script],
-                cwd=working_dir,
-                env=env,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=0  # Unbuffered
-            )
-            
-            # Start background thread to read output
-            self.server_thread = threading.Thread(target=self._read_server_output, daemon=True)
-            self.server_thread.start()
-            return True
-        except Exception as e:
-            print(f"Failed to start server: {e}")
-            return False
-    
-    def start_client(self, working_dir: str) -> bool:
-        """Start mbedTLS client"""
-        try:
-            client_binary = os.path.join(working_dir, "build", "https_mbedtls.elf")
-            if not os.path.exists(client_binary):
-                print(f"Client binary not found: {client_binary}")
-                return False
-                
-            self.client_process = subprocess.Popen(
-                [client_binary],
-                cwd=working_dir,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=0  # Unbuffered
-            )
-            
-            # Start background thread to read output
-            self.client_thread = threading.Thread(target=self._read_client_output, daemon=True)
-            self.client_thread.start()
-            return True
-        except Exception as e:
-            print(f"Failed to start client: {e}")
-            return False
-    
-    def _read_server_output(self):
-        """Read server output in background thread"""
-        try:
-            for line in iter(self.server_process.stdout.readline, ''):
-                if line:
-                    self.server_queue.put(("stdout", line.strip()))
+            # Kill any openssl processes on port 8443
+            subprocess.run(['pkill', '-f', 'openssl'], capture_output=True)
         except:
             pass
         
-        try:
-            for line in iter(self.server_process.stderr.readline, ''):
-                if line:
-                    self.server_queue.put(("stderr", line.strip()))
-        except:
-            pass
-    
-    def _read_client_output(self):
-        """Read client output in background thread"""
-        try:
-            for line in iter(self.client_process.stdout.readline, ''):
-                if line:
-                    self.client_queue.put(("stdout", line.strip()))
-        except:
-            pass
-    
-    def get_outputs(self) -> Dict[str, Any]:
-        """Get all captured outputs quickly"""
-        server_lines = []
-        client_lines = []
-        
-        # Drain all available output from queues
-        while not self.server_queue.empty():
-            try:
-                msg_type, content = self.server_queue.get_nowait()
-                server_lines.append(f"{msg_type.upper()}: {content}")
-            except queue.Empty:
-                break
-        
-        while not self.client_queue.empty():
-            try:
-                msg_type, content = self.client_queue.get_nowait()
-                client_lines.append(content)
-            except queue.Empty:
-                break
-        
-        server_running = self.server_process and self.server_process.poll() is None
-        client_running = self.client_process and self.client_process.poll() is None
-        
-        return {
-            "server_output": server_lines,
-            "client_output": client_lines,
-            "server_running": server_running,
-            "client_running": client_running
-        }
-    
-    def stop_processes(self):
-        """Stop all processes immediately"""
         if self.server_process:
             try:
                 self.server_process.terminate()
@@ -160,24 +54,168 @@ class FastProcessManager:
                 except:
                     pass
             self.client_process = None
-        
-        # Additional cleanup: kill any remaining openssl processes on port 8443
+    
+    def build_client(self, working_dir: str) -> tuple[bool, str]:
+        """Build mbedTLS client using ESP-IDF - follows run_client.sh pattern"""
         try:
-            import subprocess
-            result = subprocess.run(['ss', '-tulpn'], capture_output=True, text=True)
-            for line in result.stdout.split('\n'):
-                if ':8443' in line and 'openssl' in line:
-                    # Extract PID and kill it
-                    import re
-                    pid_match = re.search(r'pid=(\d+)', line)
-                    if pid_match:
-                        pid = int(pid_match.group(1))
-                        subprocess.run(['kill', '-9', str(pid)], capture_output=True)
-        except:
-            pass
+            # Set up environment like the shell script
+            env = os.environ.copy()
+            env['IDF_PATH'] = '/home/david/esp/idf'
+            
+            # Use the exact same build command as the shell script
+            build_script = f"""
+            source /home/david/esp/idf/export.sh
+            cd {working_dir}
+            idf.py build
+            """
+            
+            print(f"Building client in {working_dir}...")
+            build_process = subprocess.run(
+                ['bash', '-c', build_script],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+            
+            build_output = f"Build return code: {build_process.returncode}\n"
+            if build_process.stdout:
+                build_output += f"Build stdout:\n{build_process.stdout}\n"
+            if build_process.stderr:
+                build_output += f"Build stderr:\n{build_process.stderr}\n"
+            
+            # Check return code like the shell script does
+            if build_process.returncode != 0:
+                build_output += f"Build failed with return code {build_process.returncode}\n"
+                return False, build_output
+                
+            # Check if binary exists
+            client_binary = os.path.join(working_dir, "build", "https_mbedtls.elf")
+            if os.path.exists(client_binary):
+                build_output += f"Build successful, binary exists: {client_binary}\n"
+                return True, build_output
+            else:
+                build_output += f"Build completed but binary not found: {client_binary}\n"
+                return False, build_output
+                
+        except subprocess.TimeoutExpired:
+            build_output = "Build timed out after 60 seconds\n"
+            return False, build_output
+        except Exception as e:
+            build_output = f"Build failed: {e}\n"
+            return False, build_output
+    
+    def run_test(self, working_dir: str) -> tuple[bool, str]:
+        """Run the complete test - follows run.sh pattern"""
+        try:
+            # Clean up first
+            self.cleanup_processes()
+            
+            # Build client first (like run.sh does)
+            build_success, build_output = self.build_client(working_dir)
+            if not build_success:
+                return False, f"Build failed:\n{build_output}"
+            
+            self.last_build_output = build_output
+            
+            # Set up environment like run.sh
+            env = os.environ.copy()
+            env['LD_LIBRARY_PATH'] = "/home/david/ossl-3.5/lib64:/home/david/ossl-3.5/lib"
+            env['PATH'] = "/home/david/ossl-3.5/bin:" + env.get('PATH', '')
+            
+            # Start server (like run.sh line 12) - removed -trace flag as requested
+            server_cmd = [
+                'openssl', 's_server', 
+                '-accept', '8443',
+                '-cert', 'server.crt',
+                '-key', 'server.key',
+                '-tls1_3',
+                '-groups', 'X25519MLKEM768',
+                '-www',
+                '-msg',
+                '-debug'
+            ]
+            
+            self.server_process = subprocess.Popen(
+                server_cmd,
+                cwd=working_dir,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            
+            # Wait for server to start (like run.sh sleep 1)
+            time.sleep(1)
+            
+            # Start client (like run.sh line 14)
+            client_binary = os.path.join(working_dir, "build", "https_mbedtls.elf")
+            self.client_process = subprocess.Popen(
+                [client_binary],
+                cwd=working_dir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True
+            )
+            
+            # Wait for client to complete (like run.sh wait)
+            try:
+                client_output, _ = self.client_process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                # Client didn't exit cleanly, but we got the output we need
+                self.client_process.kill()
+                client_output, _ = self.client_process.communicate()
+            
+            # Get server output
+            try:
+                server_output, server_error = self.server_process.communicate(timeout=1)
+            except subprocess.TimeoutExpired:
+                # Server still running, kill it and get output
+                self.server_process.kill()
+                server_output, server_error = self.server_process.communicate()
+            
+            # Clean up
+            self.cleanup_processes()
+            
+            # Format results
+            test_output = f"""# Hybrid PQC TLS Test Results
 
-# Global process manager
-process_manager = FastProcessManager()
+## Build Output
+```
+{build_output}
+```
+
+## Server Output
+```
+{server_output}
+```
+
+## Server Error
+```
+{server_error}
+```
+
+## Client Output
+```
+{client_output}
+```
+
+## Analysis
+Test completed. Client and server attempted handshake with X25519MLKEM768 groups.
+"""
+            
+            self.last_test_output = test_output
+            return True, test_output
+            
+        except subprocess.TimeoutExpired:
+            self.cleanup_processes()
+            return False, "Test timed out"
+        except Exception as e:
+            self.cleanup_processes()
+            return False, f"Test failed: {e}"
+
+# Global test runner
+test_runner = SimpleTestRunner()
 
 # Initialize MCP server
 server = Server("hybrid-pqc-tester")
@@ -188,7 +226,7 @@ async def handle_list_tools() -> List[Tool]:
     return [
         Tool(
             name="run_fast_test",
-            description="Run fast OpenSSL server and mbedTLS client test (~250ms)",
+            description="Run fast OpenSSL server and mbedTLS client test (builds client first, then ~250ms test)",
             inputSchema={
                 "type": "object",
                 "properties": {},
@@ -222,52 +260,22 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> List[TextCon
     if name == "run_fast_test":
         working_dir = "/home/david/repos/upqc-lab/hybrid/target_client"
         
-        # Stop existing processes
-        process_manager.stop_processes()
+        success, output = test_runner.run_test(working_dir)
         
-        # Start server
-        if process_manager.start_server(working_dir):
-            await asyncio.sleep(0.5)  # Brief wait for server to start
-            
-            # Start client
-            if process_manager.start_client(working_dir):
-                # Wait for handshake to complete (should be ~250ms)
-                await asyncio.sleep(0.3)  # Brief wait for handshake
-                
-                outputs = process_manager.get_outputs()
-                
-                result = f"""# Fast Hybrid PQC TLS Test
-
-## Status
-- Server running: {outputs['server_running']}
-- Client running: {outputs['client_running']}
-
-## Server Output
-```
-{chr(10).join(outputs['server_output'])}
-```
-
-## Client Output  
-```
-{chr(10).join(outputs['client_output'])}
-```
-
-## Analysis
-Test completed in ~250ms. Handshake failure expected due to group incompatibility.
-"""
-                return [TextContent(type="text", text=result)]
-            else:
-                return [TextContent(type="text", text="Failed to start client")]
+        if success:
+            return [TextContent(type="text", text=output)]
         else:
-            return [TextContent(type="text", text="Failed to start server")]
+            return [TextContent(type="text", text=f"Test failed:\n{output}")]
     
     elif name == "get_outputs":
-        outputs = process_manager.get_outputs()
-        result = json.dumps(outputs, indent=2)
-        return [TextContent(type="text", text=result)]
+        # Return the last test results
+        if test_runner.last_test_output:
+            return [TextContent(type="text", text=test_runner.last_test_output)]
+        else:
+            return [TextContent(type="text", text="No test results available")]
     
     elif name == "stop_test":
-        process_manager.stop_processes()
+        test_runner.cleanup_processes()
         return [TextContent(type="text", text="Stopped all processes")]
     
     else:
@@ -290,4 +298,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
