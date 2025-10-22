@@ -187,3 +187,177 @@ mcp_hybrid-pqc-tester_run_fast_test
 
 ---
 *This plan will be updated as we progress through the implementation process.*
+
+## TLS 1.3 Hybrid Client Implementation (X25519MLKEM768 in mbedTLS)
+
+### Roles Clarification
+- Client (mbedTLS):
+  - Generate ephemeral X25519 keypair
+  - Generate ephemeral ML-KEM-768 keypair
+  - Send ClientHello KeyShare with `key_exchange = ML-KEM pk (1184) || X25519 pk (32)`
+  - Parse ServerHello KeyShare with `key_exchange = ML-KEM ct (1088) || X25519 pk_s (32)`
+  - Compute secrets:
+    - ML-KEM decapsulation with client ML-KEM sk and server ML-KEM ct → 32 bytes
+    - X25519 ECDH with client X25519 sk and server X25519 pk_s → 32 bytes
+    - Concatenate to 64B secret: `ML-KEM ss || X25519 ss` and feed to TLS 1.3 key schedule
+- Server (OpenSSL 3.5+):
+  - Parse client public `ML-KEM pk || X25519 pk_c`
+  - Encapsulate ML-KEM (produce ct and ML-KEM ss)
+  - Generate ephemeral X25519 and compute ECDH with X25519 pk_c → X25519 ss
+  - Send ServerHello KeyShare with `ML-KEM ct || X25519 pk_s`
+
+This matches `hybrid/linux_server/X25519MLKEM768_Implementation_Guide.md`:
+- Public Key (client→server): 1216B = 1184 (ML-KEM pk) + 32 (X25519 pk)
+- Ciphertext (server→client): 1120B = 1088 (ML-KEM ct) + 32 (X25519 pk_s)
+- Shared Secret: 64B = 32 (ML-KEM ss) + 32 (X25519 ss)
+
+### Integration Points in mbedTLS
+- KeyShare write (ClientHello): `library/ssl_tls13_client.c` → `ssl_tls13_write_key_share_ext()`
+  - For group `0x11EC`, generate both X25519 and ML-KEM-768 keypairs
+  - Serialize key_exchange as `ML-KEM pk || X25519 pk`
+  - Store ML-KEM sk and X25519 sk in handshake context
+- KeyShare parse (ServerHello): `library/ssl_tls13_client.c` → `ssl_tls13_parse_key_share_ext()`
+  - For group `0x11EC`, parse `ML-KEM ct || X25519 pk_s`
+  - Compute ECDH and ML-KEM decapsulation; concatenate 64B secret and pass to TLS 1.3 key schedule
+- HRR handling: `ssl_tls13_reset_key_share()` must securely free ML-KEM state and regenerate on retry
+- Secret plumbing: replace the normal (EC)DHE secret with the 64B hybrid secret for TLS 1.3 key derivation
+
+### Handshake Context Additions
+- Add to handshake state:
+  - `uint8_t *mlx_mlkem_sk` (2400B)
+  - `size_t mlx_mlkem_sk_len`
+  - `uint8_t x25519_priv[32]`
+  - Ensure secure allocation/zeroization on success/error paths
+
+### LibOQS Integration (Reuse from examples)
+- Use `OQS_KEM_new(OQS_KEM_alg_ml_kem_768)`, `OQS_KEM_keypair()`, `OQS_KEM_decaps()`
+- Link `liboqs` in ESP-IDF mbedTLS component; add include paths for `oqs/oqs.h`
+- Gate with a build option (e.g., `UPQC_ENABLE_HYBRID_11EC`)
+
+### Length and Validation
+- ClientHello `key_exchange_len` must be 1216
+- ServerHello `key_exchange_len` must be 1120
+- Abort with `illegal_parameter` on mismatch
+
+### Security & Zeroization
+- Zeroize ML-KEM sk, ML-KEM ss, X25519 priv, and combined secret immediately after use
+- Properly handle errors and HRR to avoid key reuse or leaks
+
+### Test Plan
+- Interop with OpenSSL server (X25519MLKEM768):
+  - Confirm selection of group 0x11EC
+  - Validate byte lengths and successful handshake
+  - Confirm application data exchange completes
+- Negative tests: bad lengths, missing fields, HRR path
+
+### Action Items
+- [ ] Add handshake fields for ML-KEM and X25519 client state
+- [ ] Implement ClientHello hybrid key_share writer for 0x11EC
+- [ ] Implement ServerHello hybrid key_share parser for 0x11EC
+- [ ] Compute and inject 64B hybrid secret into TLS 1.3 key schedule
+- [ ] HRR reset logic for hybrid assets
+- [ ] Build system changes to link liboqs
+- [ ] Zeroization and error-handling coverage
+- [ ] Interoperability tests with OpenSSL server
+
+## Client-Only Minimal Demo (mbedTLS + liboqs, outside TLS 1.3)
+
+### Goal
+Create a minimal, client-only demo that performs post-quantum key establishment using ML-KEM-768 encapsulation (no ML-KEM key generation on client), derives symmetric keys via HKDF, and exchanges AEAD-encrypted application data over a custom TCP channel. This runs entirely outside TLS 1.3, but mirrors the crypto flow needed later inside TLS.
+
+### Scope and Constraints
+- Client-only responsibilities:
+  - Receive server’s ML-KEM-768 public key
+  - Perform ML-KEM-768 encapsulation using liboqs (no KEM key generation on client)
+  - Derive an application AEAD key via HKDF-SHA256
+  - Send/receive encrypted messages with AES-256-GCM
+- Reuse the exact ML-KEM implementation used by the existing target example
+  - Location: `examples/target/main/crypto_backend_custom_pqc.c`
+  - Configuration: `examples/shared/upqc_config.h` with `UPQC_KEM_LEVEL=768`
+- Out of scope for this demo:
+  - TLS 1.3 handshake state machine changes
+  - Hybrid X25519 + ML-KEM combined secret within TLS
+  - Certificate verification and record layer integration
+
+### Why this demo
+- Proves the PQC client-side primitive is viable on the target with realistic buffers
+- Exercises liboqs ML-KEM-768 encapsulation only (client role)
+- Validates HKDF + AEAD glue using mbedTLS primitives
+- Provides a stepping stone to map into TLS 1.3 KeyShare logic later
+
+### Architecture
+- Transport: plain TCP socket
+- Roles:
+  - Server (host, Linux): generates ML-KEM-768 keypair; sends public key; decapsulates; echoes messages
+  - Client (ESP-IDF, mbedTLS environment): encapsulates; derives symmetric key; encrypts application data
+- Crypto primitives on client:
+  - ML-KEM-768 (encapsulation only) via liboqs
+  - HKDF-SHA256 (mbedTLS helper wrapper already present)
+  - AES-256-GCM (mbedTLS helper wrapper already present)
+
+### Wire Protocol (custom channel)
+1) Server → Client: `MSG_TYPE_PUBLIC_KEY` + ML-KEM-768 public key (1184 bytes)
+2) Client → Server: `MSG_TYPE_CIPHERTEXT` + ML-KEM-768 ciphertext (1088 bytes)
+3) Thereafter: `MSG_TYPE_ENCRYPTED` framed messages (IV || ciphertext || tag), with AAD = sequence number (4 bytes, network order)
+
+Message framing (big endian lengths):
+- 1 byte: message type
+- 4 bytes: payload length `N`
+- N bytes: payload
+
+### Implementation Plan
+1. Select ML-KEM-768
+   - Build with `-DUPQC_KEM_LEVEL=768` so `UPQC_OQS_KEM_ALG = OQS_KEM_alg_ml_kem_768`
+   - Confirm buffer sizes match liboqs constants (pk=1184, sk=2400 on server, ct=1088, ss=32)
+2. Client role only (encapsulation)
+   - Initialize liboqs: `OQS_init()`
+   - Create KEM: `OQS_KEM_new(UPQC_OQS_KEM_ALG)`
+   - Receive server public key (1184 bytes)
+   - Perform `OQS_KEM_encaps()` to obtain ciphertext (1088) and shared secret (32)
+3. Key schedule glue
+   - Use existing HKDF helper to derive AES-256 key from shared secret
+   - Use existing AEAD helpers to encrypt/decrypt application data, with AAD = sequence number
+4. Client demo flow
+   - Connect to server (host-side demo present in `examples/host`)
+   - Run handshake (receive pubkey → encapsulate → send ciphertext)
+   - Exchange a few encrypted messages; log timings and sizes
+5. Cleanup
+   - Zeroize shared secret and AES key on shutdown
+   - Free liboqs objects; call `OQS_destroy()`
+
+### Files and Reuse
+- Reuse (client side): `examples/target/main/crypto_backend_custom_pqc.c`
+  - Functions already present: encapsulation path, HKDF/AEAD wrappers, send/recv framing
+- Config: `examples/shared/upqc_config.h` (set `UPQC_KEM_LEVEL=768`)
+- Client app entry: `examples/target/main/client.c` (already drives the handshake and echo)
+- Host counterpart (for testing): `examples/host/server.c` (generates KEM keypair, decapsulates)
+
+### Build and Run
+- Host (server):
+  - `cd examples/host && mkdir -p build && cd build`
+  - `cmake -DCRYPTO_BACKEND_DEFAULT=openssl .. && make -j`
+  - `./bin/server`
+- Target (client on Linux mbedTLS env or ESP-IDF):
+  - Ensure `UPQC_KEM_LEVEL=768` in build
+  - `cd examples/target && idf.py build` (or run via existing MCP scripts)
+  - Flash/monitor for ESP32, or run in the provided Linux target env
+
+### Mapping to OpenSSL Hybrid Guide
+- OpenSSL’s hybrid X25519MLKEM768 uses: `PublicKey = ML-KEM pk || X25519 pk` and `Ciphertext = ML-KEM ct || X25519 pk` with `SharedSecret = ML-KEM ss || X25519 ss` (64 bytes total)
+- This minimal demo implements the ML-KEM portion only (client encapsulates ML-KEM, no ML-KEM keygen on client), which corresponds to the KEM side of the hybrid described in `hybrid/linux_server/X25519MLKEM768_Implementation_Guide.md`
+- When moving to TLS 1.3 integration, we will:
+  - Add X25519 ephemeral generation on client
+  - Combine secrets (ML-KEM 32B || X25519 32B) before TLS 1.3 HKDF-Extract
+  - Encode KeyShare consistent with OpenSSL’s hybrid layout
+
+### Risks and Mitigations
+- Memory footprint: ensure buffers (≥ 2400 bytes SK on server only, 1184/1088 on client peer) are allocated once and reused
+- Timing and performance: log `OQS_KEM_encaps()` latency using `esp_timer`
+- Interoperability: use the existing host demo as authoritative counterpart for the wire format
+
+### Tasks
+- [ ] Ensure `UPQC_KEM_LEVEL=768` in client build
+- [ ] Verify client encapsulation path works end-to-end with host server
+- [ ] Measure and log encapsulation latency and message sizes
+- [ ] Zeroize secrets and validate no leaks
+- [ ] Document results and promote next step to TLS 1.3 hybrid integration

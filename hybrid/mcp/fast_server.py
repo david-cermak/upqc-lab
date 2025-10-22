@@ -250,6 +250,15 @@ async def handle_list_tools() -> List[Tool]:
                 "properties": {},
                 "required": []
             }
+        ),
+        Tool(
+            name="build_only",
+            description="Build the target_client project only (no server/client execution)",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
         )
     ]
 
@@ -277,6 +286,17 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> List[TextCon
     elif name == "stop_test":
         test_runner.cleanup_processes()
         return [TextContent(type="text", text="Stopped all processes")]
+    
+    elif name == "build_only":
+        working_dir = "/home/david/repos/upqc-lab/hybrid/target_client"
+        
+        # Just run the build step
+        success, output = test_runner.build_project(working_dir)
+        
+        if success:
+            return [TextContent(type="text", text=f"Build successful:\n{output}")]
+        else:
+            return [TextContent(type="text", text=f"Build failed:\n{output}")]
     
     else:
         return [TextContent(type="text", text=f"Unknown tool: {name}")]
