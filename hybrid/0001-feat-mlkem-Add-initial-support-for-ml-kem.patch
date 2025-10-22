@@ -1,0 +1,85 @@
+From c558e72affabad6940dbdae4c094048919a88874 Mon Sep 17 00:00:00 2001
+From: David Cermak <cermak@espressif.com>
+Date: Wed, 22 Oct 2025 07:47:17 +0200
+Subject: [PATCH] feat(mlkem): Add initial support for ml-kem
+
+---
+ components/mbedtls/CMakeLists.txt                    |  6 ++++--
+ components/mbedtls/Kconfig                           |  8 ++++++++
+ components/mbedtls/mbedtls                           |  2 +-
+ components/mbedtls/port/include/mbedtls/esp_config.h | 10 ++++++++++
+ 4 files changed, 23 insertions(+), 3 deletions(-)
+
+diff --git a/components/mbedtls/CMakeLists.txt b/components/mbedtls/CMakeLists.txt
+index b8f3f1d41d7..ae872fb2cff 100644
+--- a/components/mbedtls/CMakeLists.txt
++++ b/components/mbedtls/CMakeLists.txt
+@@ -39,10 +39,10 @@ if(CONFIG_MBEDTLS_CERTIFICATE_BUNDLE)
+     list(APPEND mbedtls_include_dirs "esp_crt_bundle/include")
+ endif()
+ 
+-idf_component_register(SRCS "${mbedtls_srcs}"
++idf_component_register(SRCS "${mbedtls_srcs}" mbedtls/library/ssl_hybrid_pqc.c
+     INCLUDE_DIRS "${mbedtls_include_dirs}"
+     PRIV_REQUIRES "${priv_requires}"
+-    REQUIRES "${requires}"
++    REQUIRES ${requires} mlkem768_temp
+     )
+ 
+ # Determine the type of mbedtls component library
+@@ -420,3 +420,5 @@ endif()
+ if(CONFIG_ATCA_MBEDTLS_ECDSA)
+     mbedcrypto_optional_deps(espressif__esp-cryptoauthlib esp-cryptoauthlib)
+ endif()
++
++target_link_libraries(${COMPONENT_LIB} PRIVATE "-u mbedtls_ssl_tls13_generate_hybrid_x25519mlkem768_key_exchange")
+diff --git a/components/mbedtls/Kconfig b/components/mbedtls/Kconfig
+index 28295bf7e28..bbc6473e39c 100644
+--- a/components/mbedtls/Kconfig
++++ b/components/mbedtls/Kconfig
+@@ -573,6 +573,14 @@ menu "mbedTLS"
+                 bool "TLS 1.3 PSK ephemeral key exchange mode"
+                 default y
+ 
++            config MBEDTLS_UPQC_ENABLE_HYBRID_11EC
++                depends on MBEDTLS_SSL_PROTO_TLS1_3
++                bool "Enable hybrid X25519MLKEM768 support"
++                default n
++                help
++                    Enable hybrid X25519MLKEM768 support for TLS 1.3.
++                    This enables the X25519MLKEM768 hybrid group (0x11EC) in TLS 1.3.
++
+             config MBEDTLS_SSL_EARLY_DATA
+                 depends on MBEDTLS_SSL_PROTO_TLS1_3
+                 bool "TLS 1.3 early data"
+diff --git a/components/mbedtls/mbedtls b/components/mbedtls/mbedtls
+index 05556725a28..33c92cbde40 160000
+--- a/components/mbedtls/mbedtls
++++ b/components/mbedtls/mbedtls
+@@ -1 +1 @@
+-Subproject commit 05556725a2816aecbf87623c959a4a80ee7eb6de
++Subproject commit 33c92cbde4037f2a86ac7adea4b73a3556a04bc0
+diff --git a/components/mbedtls/port/include/mbedtls/esp_config.h b/components/mbedtls/port/include/mbedtls/esp_config.h
+index 611d0878a80..2ebe12b70b8 100644
+--- a/components/mbedtls/port/include/mbedtls/esp_config.h
++++ b/components/mbedtls/port/include/mbedtls/esp_config.h
+@@ -1435,6 +1435,16 @@
+ #undef MBEDTLS_SSL_PROTO_TLS1_3
+ #endif
+ 
++/**
++ * \def UPQC_ENABLE_HYBRID_11EC
++ *
++ * Enable hybrid X25519MLKEM768 support for TLS 1.3.
++ * This enables the X25519MLKEM768 hybrid group (0x11EC) in TLS 1.3.
++ */
++#ifdef CONFIG_MBEDTLS_UPQC_ENABLE_HYBRID_11EC
++#define UPQC_ENABLE_HYBRID_11EC
++#endif
++
+ /**
+  * \def MBEDTLS_SSL_TLS1_3_COMPATIBILITY_MODE
+  *
+-- 
+2.43.0
+

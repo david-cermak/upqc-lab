@@ -37,6 +37,9 @@ int mlkem768_init(mlkem768_ctx_t *ctx)
         return -1;
     }
 
+    // Attach impl early so cleanup can free on partial failures
+    ctx->kem = impl;
+
     // Allocate memory for keys
     impl->public_key = malloc(impl->kem->length_public_key);
     impl->secret_key = malloc(impl->kem->length_secret_key);
@@ -49,7 +52,11 @@ int mlkem768_init(mlkem768_ctx_t *ctx)
         return -1;
     }
 
-    ctx->kem = impl;
+    // Expose internal buffers via public ctx for external users
+    ctx->public_key = impl->public_key;
+    ctx->secret_key = impl->secret_key;
+    ctx->ciphertext = impl->ciphertext;
+    ctx->shared_secret = impl->shared_secret;
     return 0;
 }
 
@@ -131,6 +138,10 @@ int mlkem768_cleanup(mlkem768_ctx_t *ctx)
 
     free(impl);
     ctx->kem = NULL;
+    ctx->public_key = NULL;
+    ctx->secret_key = NULL;
+    ctx->ciphertext = NULL;
+    ctx->shared_secret = NULL;
 
     return 0;
 }

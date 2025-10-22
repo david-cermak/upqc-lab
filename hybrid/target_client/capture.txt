@@ -1,0 +1,323 @@
+No.     Time           Source                Destination           Protocol Length Info
+   3647 26.994240679   127.0.0.1             127.0.0.1             TCP      74     37446 → 8443 [SYN] Seq=0 Win=65495 Len=0 MSS=65495 SACK_PERM TSval=2416362417 TSecr=0 WS=128
+
+Frame 3647: 74 bytes on wire (592 bits), 74 bytes captured (592 bits) on interface lo, id 0
+Ethernet II, Src: 00:00:00_00:00:00 (00:00:00:00:00:00), Dst: 00:00:00_00:00:00 (00:00:00:00:00:00)
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 37446, Dst Port: 8443, Seq: 0, Len: 0
+
+No.     Time           Source                Destination           Protocol Length Info
+   3648 26.994251061   127.0.0.1             127.0.0.1             TCP      74     8443 → 37446 [SYN, ACK] Seq=0 Ack=1 Win=65483 Len=0 MSS=65495 SACK_PERM TSval=2416362417 TSecr=2416362417 WS=128
+
+Frame 3648: 74 bytes on wire (592 bits), 74 bytes captured (592 bits) on interface lo, id 0
+Ethernet II, Src: 00:00:00_00:00:00 (00:00:00:00:00:00), Dst: 00:00:00_00:00:00 (00:00:00:00:00:00)
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 8443, Dst Port: 37446, Seq: 0, Ack: 1, Len: 0
+
+No.     Time           Source                Destination           Protocol Length Info
+   3649 26.994262465   127.0.0.1             127.0.0.1             TCP      66     37446 → 8443 [ACK] Seq=1 Ack=1 Win=65536 Len=0 TSval=2416362417 TSecr=2416362417
+
+Frame 3649: 66 bytes on wire (528 bits), 66 bytes captured (528 bits) on interface lo, id 0
+Ethernet II, Src: 00:00:00_00:00:00 (00:00:00:00:00:00), Dst: 00:00:00_00:00:00 (00:00:00:00:00:00)
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 37446, Dst Port: 8443, Seq: 1, Ack: 1, Len: 0
+
+No.     Time           Source                Destination           Protocol Length Info
+   3650 26.995182156   127.0.0.1             127.0.0.1             TLSv1.3  1466   Client Hello (SNI=127.0.0.1)
+
+Frame 3650: 1466 bytes on wire (11728 bits), 1466 bytes captured (11728 bits) on interface lo, id 0
+Ethernet II, Src: 00:00:00_00:00:00 (00:00:00:00:00:00), Dst: 00:00:00_00:00:00 (00:00:00:00:00:00)
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 37446, Dst Port: 8443, Seq: 1, Ack: 1, Len: 1400
+Transport Layer Security
+    TLSv1.3 Record Layer: Handshake Protocol: Client Hello
+        Content Type: Handshake (22)
+        Version: TLS 1.2 (0x0303)
+        Length: 1395
+        Handshake Protocol: Client Hello
+            Handshake Type: Client Hello (1)
+            Length: 1391
+            Version: TLS 1.2 (0x0303)
+            Random: e49606dc43957f5612d285bc4f2ba613c7b088a78b28fa377d5d83bb54aa03c7
+            Session ID Length: 32
+            Session ID: 0e33d1bea130682c44df54ce2ba47410fa6758e77b66d2c8c8881bb77898b0f3
+            Cipher Suites Length: 10
+            Cipher Suites (5 suites)
+            Compression Methods Length: 1
+            Compression Methods (1 method)
+            Extensions Length: 1308
+            Extension: server_name (len=14) name=127.0.0.1
+                Type: server_name (0)
+                Length: 14
+                Server Name Indication extension
+            Extension: supported_versions (len=3) TLS 1.3
+                Type: supported_versions (43)
+                Length: 3
+                Supported Versions length: 2
+                Supported Version: TLS 1.3 (0x0304)
+            Extension: key_share (len=1222) Unknown (4588)
+                Type: key_share (51)
+                Length: 1222
+                Key Share extension
+                    Client Key Share Length: 1220
+                    Key Share Entry: Group: Unknown (4588), Key Exchange length: 1216
+                        Group: Unknown (4588)
+                        Key Exchange Length: 1216
+                        Key Exchange [truncated]: f2da121f16bfb5a14dc6001251ea89672365cb67b4c512a9ca8a22dda4329e699b44d0602b69417614c52ed63b0b372de2c9608681a182748c9b29923758b227c6683d79b4677753b80287172bb7299a8c04070059545ca5cc7a6acb4342ea4880a67e776ac4485a3a20b
+            Extension: psk_key_exchange_modes (len=3)
+                Type: psk_key_exchange_modes (45)
+                Length: 3
+                PSK Key Exchange Modes Length: 2
+                PSK Key Exchange Mode: PSK with (EC)DHE key establishment (psk_dhe_ke) (1)
+                PSK Key Exchange Mode: PSK-only key establishment (psk_ke) (0)
+            Extension: supported_groups (len=22)
+                Type: supported_groups (10)
+                Length: 22
+                Supported Groups List Length: 20
+                Supported Groups (10 groups)
+            Extension: signature_algorithms (len=20)
+                Type: signature_algorithms (13)
+                Length: 20
+                Signature Hash Algorithms Length: 18
+                Signature Hash Algorithms (9 algorithms)
+            [JA4: t13d050600_5675113af134_3fb95f9de270]
+            [JA4_r: t13d050600_00ff,1301,1302,1304,1305_000a,000d,002b,002d,0033_0403,0503,0603,0806,0805,0804,0601,0501,0401]
+            [JA3 Fullstring: 771,4866-4865-4868-4869-255,0-43-51-45-10-13,4588-29-23-24-25-256-257-258-259-260,]
+            [JA3: 843af75e157badb8d915dfe13d0384ea]
+
+No.     Time           Source                Destination           Protocol Length Info
+   3651 26.995195062   127.0.0.1             127.0.0.1             TCP      66     8443 → 37446 [ACK] Seq=1 Ack=1401 Win=78592 Len=0 TSval=2416362418 TSecr=2416362418
+
+Frame 3651: 66 bytes on wire (528 bits), 66 bytes captured (528 bits) on interface lo, id 0
+Ethernet II, Src: 00:00:00_00:00:00 (00:00:00:00:00:00), Dst: 00:00:00_00:00:00 (00:00:00:00:00:00)
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 8443, Dst Port: 37446, Seq: 1, Ack: 1401, Len: 0
+
+No.     Time           Source                Destination           Protocol Length Info
+   3652 26.997854622   127.0.0.1             127.0.0.1             TLSv1.3  2653   Server Hello, Change Cipher Spec, Application Data, Application Data, Application Data, Application Data
+
+Frame 3652: 2653 bytes on wire (21224 bits), 2653 bytes captured (21224 bits) on interface lo, id 0
+Ethernet II, Src: 00:00:00_00:00:00 (00:00:00:00:00:00), Dst: 00:00:00_00:00:00 (00:00:00:00:00:00)
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 8443, Dst Port: 37446, Seq: 1, Ack: 1401, Len: 2587
+Transport Layer Security
+    TLSv1.3 Record Layer: Handshake Protocol: Server Hello
+        Content Type: Handshake (22)
+        Version: TLS 1.2 (0x0303)
+        Length: 1210
+        Handshake Protocol: Server Hello
+            Handshake Type: Server Hello (2)
+            Length: 1206
+            Version: TLS 1.2 (0x0303)
+            Random: 6a23ca3b447d5335fc7c4bd32c100282e5238ac5fe467b2b3454ffb3e951e93b
+            Session ID Length: 32
+            Session ID: 0e33d1bea130682c44df54ce2ba47410fa6758e77b66d2c8c8881bb77898b0f3
+            Cipher Suite: TLS_AES_256_GCM_SHA384 (0x1302)
+            Compression Method: null (0)
+            Extensions Length: 1134
+            Extension: supported_versions (len=2) TLS 1.3
+                Type: supported_versions (43)
+                Length: 2
+                Supported Version: TLS 1.3 (0x0304)
+            Extension: key_share (len=1124) Unknown (4588)
+                Type: key_share (51)
+                Length: 1124
+                Key Share extension
+                    Key Share Entry: Group: Unknown (4588), Key Exchange length: 1120
+                        Group: Unknown (4588)
+                        Key Exchange Length: 1120
+                        Key Exchange [truncated]: 8fd6e403c73c00b5bb451c4370c71a299c1569f2d96a844dcfff2bb25cff54461db2d8eb42a55445f17c05ef3ee40a28da59c1d7a8ba9330a00cc32640a4d6505dbb966466c63eb5849fcf2960068ea2180edcc9a54d29d08720a8830e17b0479a2f5b0fd14315a6082c4
+            [JA3S Fullstring: 771,4866,43-51]
+            [JA3S: 15af977ce25de452b96affa2addb1036]
+    TLSv1.3 Record Layer: Change Cipher Spec Protocol: Change Cipher Spec
+        Content Type: Change Cipher Spec (20)
+        Version: TLS 1.2 (0x0303)
+        Length: 1
+        Change Cipher Spec Message
+    TLSv1.3 Record Layer: Application Data Protocol: Application Data
+        Opaque Type: Application Data (23)
+        Version: TLS 1.2 (0x0303)
+        Length: 23
+        Encrypted Application Data: d2bae90cb956b4bfa0f56580a5f1e6ed365145f0bdcb1d
+    TLSv1.3 Record Layer: Application Data Protocol: Application Data
+        Opaque Type: Application Data (23)
+        Version: TLS 1.2 (0x0303)
+        Length: 973
+        Encrypted Application Data [truncated]: d7a0847d9c0de05a59bd31d875497955a16884abb0088983233fd355962a8f62f96dc26a0effb364982ae27c81105916c3516bda7ed95964c1c24b7096278543cb776dc39ebd0237deca241c1c93b9a95020914a530abf0f80970c1aa961bcf0b7a3304
+    TLSv1.3 Record Layer: Application Data Protocol: Application Data
+        Opaque Type: Application Data (23)
+        Version: TLS 1.2 (0x0303)
+        Length: 281
+        Encrypted Application Data [truncated]: 18bbb503d5818bb0ad3dea1e5cdad59c860cf990bae2aa81ba64b386566dcd8ad2269a77454f464bd638a39ee9a49f742561ff2116f878d0e53381bf9ae1cc9a26f71a037eabd2a61b59f5300318764143f33d6437ce6005695b09c492211002fa36d92
+    TLSv1.3 Record Layer: Application Data Protocol: Application Data
+        Opaque Type: Application Data (23)
+        Version: TLS 1.2 (0x0303)
+        Length: 69
+        Encrypted Application Data: b049a3c5f318f4e3549849ecda3cbaab9ad3ce71f00b84fb07d86711f28503437cb08ecc0f0301fde0bf7a5ab16bcf9e1780324d0fedce166a725f9fcf7fdfb1fba4e608ef
+
+No.     Time           Source                Destination           Protocol Length Info
+   3653 26.997870666   127.0.0.1             127.0.0.1             TCP      66     37446 → 8443 [ACK] Seq=1401 Ack=2588 Win=94720 Len=0 TSval=2416362420 TSecr=2416362420
+
+Frame 3653: 66 bytes on wire (528 bits), 66 bytes captured (528 bits) on interface lo, id 0
+Ethernet II, Src: 00:00:00_00:00:00 (00:00:00:00:00:00), Dst: 00:00:00_00:00:00 (00:00:00:00:00:00)
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 37446, Dst Port: 8443, Seq: 1401, Ack: 2588, Len: 0
+
+No.     Time           Source                Destination           Protocol Length Info
+   3654 26.999283486   127.0.0.1             127.0.0.1             TLSv1.3  72     Change Cipher Spec
+
+Frame 3654: 72 bytes on wire (576 bits), 72 bytes captured (576 bits) on interface lo, id 0
+Ethernet II, Src: 00:00:00_00:00:00 (00:00:00:00:00:00), Dst: 00:00:00_00:00:00 (00:00:00:00:00:00)
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 37446, Dst Port: 8443, Seq: 1401, Ack: 2588, Len: 6
+Transport Layer Security
+    TLSv1.3 Record Layer: Change Cipher Spec Protocol: Change Cipher Spec
+        Content Type: Change Cipher Spec (20)
+        Version: TLS 1.2 (0x0303)
+        Length: 1
+        Change Cipher Spec Message
+
+No.     Time           Source                Destination           Protocol Length Info
+   3681 27.040043625   127.0.0.1             127.0.0.1             TCP      66     8443 → 37446 [ACK] Seq=2588 Ack=1407 Win=78592 Len=0 TSval=2416362463 TSecr=2416362422
+
+Frame 3681: 66 bytes on wire (528 bits), 66 bytes captured (528 bits) on interface lo, id 0
+Ethernet II, Src: 00:00:00_00:00:00 (00:00:00:00:00:00), Dst: 00:00:00_00:00:00 (00:00:00:00:00:00)
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 8443, Dst Port: 37446, Seq: 2588, Ack: 1407, Len: 0
+
+No.     Time           Source                Destination           Protocol Length Info
+   3682 27.040057213   127.0.0.1             127.0.0.1             TLSv1.3  252    Application Data, Application Data
+
+Frame 3682: 252 bytes on wire (2016 bits), 252 bytes captured (2016 bits) on interface lo, id 0
+Ethernet II, Src: 00:00:00_00:00:00 (00:00:00:00:00:00), Dst: 00:00:00_00:00:00 (00:00:00:00:00:00)
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 37446, Dst Port: 8443, Seq: 1407, Ack: 2588, Len: 186
+Transport Layer Security
+    TLSv1.3 Record Layer: Application Data Protocol: Application Data
+        Opaque Type: Application Data (23)
+        Version: TLS 1.2 (0x0303)
+        Length: 80
+        Encrypted Application Data: 8298d4565624ff9c541db84f4574204fcc574561e62a6de7957ac1fa84ea79a7250e598c54ba9251731b9c24fbd049f7eae98e843dd578009db55aa22fa4ea756abcc2a96120c5427f92e2360e346552
+    TLSv1.3 Record Layer: Application Data Protocol: Application Data
+        Opaque Type: Application Data (23)
+        Version: TLS 1.2 (0x0303)
+        Length: 96
+        Encrypted Application Data: a6a9b0cf80fa2f5f0427661d98804f5463e4bbee063434a751015f81c66c44348023486e1747979aeb3ed2cc672ffd8950b5ebf51878bab062cd8c416da3737e950a227e92f42a7ed5212f3cf8c67ff37560e17c7ec213ddbdcb8d1b9988accb
+
+No.     Time           Source                Destination           Protocol Length Info
+   3683 27.040073929   127.0.0.1             127.0.0.1             TCP      66     8443 → 37446 [ACK] Seq=2588 Ack=1593 Win=79232 Len=0 TSval=2416362463 TSecr=2416362463
+
+Frame 3683: 66 bytes on wire (528 bits), 66 bytes captured (528 bits) on interface lo, id 0
+Ethernet II, Src: 00:00:00_00:00:00 (00:00:00:00:00:00), Dst: 00:00:00_00:00:00 (00:00:00:00:00:00)
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 8443, Dst Port: 37446, Seq: 2588, Ack: 1593, Len: 0
+
+No.     Time           Source                Destination           Protocol Length Info
+   3684 27.040485990   127.0.0.1             127.0.0.1             TLSv1.3  321    Application Data
+
+Frame 3684: 321 bytes on wire (2568 bits), 321 bytes captured (2568 bits) on interface lo, id 0
+Ethernet II, Src: 00:00:00_00:00:00 (00:00:00:00:00:00), Dst: 00:00:00_00:00:00 (00:00:00:00:00:00)
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 8443, Dst Port: 37446, Seq: 2588, Ack: 1593, Len: 255
+Transport Layer Security
+    TLSv1.3 Record Layer: Application Data Protocol: Application Data
+        Opaque Type: Application Data (23)
+        Version: TLS 1.2 (0x0303)
+        Length: 250
+        Encrypted Application Data [truncated]: a711783f0b564b2ebd7fd0a5678e40c7fe03ddd5115610763d705db165af59b6fb7828b40ddb750d7050b37b7bbe952ea8e2bf5d4224f0e91e17281464ec784e0d2acd11106cb6e54542a637288cd5f81b95ec99029eeb2ae7f376ae7059cd4c345215f
+
+No.     Time           Source                Destination           Protocol Length Info
+   3685 27.040713395   127.0.0.1             127.0.0.1             TLSv1.3  321    Application Data
+
+Frame 3685: 321 bytes on wire (2568 bits), 321 bytes captured (2568 bits) on interface lo, id 0
+Ethernet II, Src: 00:00:00_00:00:00 (00:00:00:00:00:00), Dst: 00:00:00_00:00:00 (00:00:00:00:00:00)
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 8443, Dst Port: 37446, Seq: 2843, Ack: 1593, Len: 255
+Transport Layer Security
+    TLSv1.3 Record Layer: Application Data Protocol: Application Data
+        Opaque Type: Application Data (23)
+        Version: TLS 1.2 (0x0303)
+        Length: 250
+        Encrypted Application Data [truncated]: 6c6500d27608741fb1c3f5a0d009b608cda74d69f1b9ea9cd2d9f33978a3f4e575746350b577bd8a98005d7c619b270e841bf888547d723bd251bc2c11d8017ee1d33eed39a7062544daaf8cf4095dd51767b4dc903eee44f63d1ee5971e53c5c34d371
+
+No.     Time           Source                Destination           Protocol Length Info
+   3686 27.040748696   127.0.0.1             127.0.0.1             TCP      66     37446 → 8443 [ACK] Seq=1593 Ack=3098 Win=96512 Len=0 TSval=2416362463 TSecr=2416362463
+
+Frame 3686: 66 bytes on wire (528 bits), 66 bytes captured (528 bits) on interface lo, id 0
+Ethernet II, Src: 00:00:00_00:00:00 (00:00:00:00:00:00), Dst: 00:00:00_00:00:00 (00:00:00:00:00:00)
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 37446, Dst Port: 8443, Seq: 1593, Ack: 3098, Len: 0
+
+No.     Time           Source                Destination           Protocol Length Info
+   3687 27.040997767   127.0.0.1             127.0.0.1             TLSv1.3  4248   Application Data
+
+Frame 3687: 4248 bytes on wire (33984 bits), 4248 bytes captured (33984 bits) on interface lo, id 0
+Ethernet II, Src: 00:00:00_00:00:00 (00:00:00:00:00:00), Dst: 00:00:00_00:00:00 (00:00:00:00:00:00)
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 8443, Dst Port: 37446, Seq: 3098, Ack: 1593, Len: 4182
+Transport Layer Security
+    TLSv1.3 Record Layer: Application Data Protocol: Application Data
+        Opaque Type: Application Data (23)
+        Version: TLS 1.2 (0x0303)
+        Length: 4177
+        Encrypted Application Data [truncated]: 281817dda870e5242af25b4c32c109cb1155e58b87bace3dfc0538935619e0b83ce2966f4fe1a19b3004287ebc79401752b40e538a3974088a58c34b93f5f35a323c22b5ab042a92736476a0de224206c49ddcae712a6e315cde13a1277e396c5773353
+
+No.     Time           Source                Destination           Protocol Length Info
+   3688 27.041659105   127.0.0.1             127.0.0.1             TLSv1.3  90     Application Data
+
+Frame 3688: 90 bytes on wire (720 bits), 90 bytes captured (720 bits) on interface lo, id 0
+Ethernet II, Src: 00:00:00_00:00:00 (00:00:00:00:00:00), Dst: 00:00:00_00:00:00 (00:00:00:00:00:00)
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 8443, Dst Port: 37446, Seq: 7280, Ack: 1593, Len: 24
+Transport Layer Security
+    TLSv1.3 Record Layer: Application Data Protocol: Application Data
+        Opaque Type: Application Data (23)
+        Version: TLS 1.2 (0x0303)
+        Length: 19
+        Encrypted Application Data: d99a3cfdc757200fcbf273a63b321db8a45c12
+
+No.     Time           Source                Destination           Protocol Length Info
+   3689 27.041661055   127.0.0.1             127.0.0.1             TCP      66     37446 → 8443 [ACK] Seq=1593 Ack=7304 Win=103424 Len=0 TSval=2416362464 TSecr=2416362464
+
+Frame 3689: 66 bytes on wire (528 bits), 66 bytes captured (528 bits) on interface lo, id 0
+Ethernet II, Src: 00:00:00_00:00:00 (00:00:00:00:00:00), Dst: 00:00:00_00:00:00 (00:00:00:00:00:00)
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 37446, Dst Port: 8443, Seq: 1593, Ack: 7304, Len: 0
+
+No.     Time           Source                Destination           Protocol Length Info
+   3692 27.044417977   127.0.0.1             127.0.0.1             TLSv1.3  103    Application Data
+
+Frame 3692: 103 bytes on wire (824 bits), 103 bytes captured (824 bits) on interface lo, id 0
+Ethernet II, Src: 00:00:00_00:00:00 (00:00:00:00:00:00), Dst: 00:00:00_00:00:00 (00:00:00:00:00:00)
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 37446, Dst Port: 8443, Seq: 1593, Ack: 7304, Len: 37
+Transport Layer Security
+    TLSv1.3 Record Layer: Application Data Protocol: Application Data
+        Opaque Type: Application Data (23)
+        Version: TLS 1.2 (0x0303)
+        Length: 32
+        Encrypted Application Data: 0eb43a038b1457c112e4aee70591ccd164b23953c29e5da2c0f6efb57ce06975
+
+No.     Time           Source                Destination           Protocol Length Info
+   3693 27.044453741   127.0.0.1             127.0.0.1             TCP      66     37446 → 8443 [FIN, ACK] Seq=1630 Ack=7304 Win=103424 Len=0 TSval=2416362467 TSecr=2416362464
+
+Frame 3693: 66 bytes on wire (528 bits), 66 bytes captured (528 bits) on interface lo, id 0
+Ethernet II, Src: 00:00:00_00:00:00 (00:00:00:00:00:00), Dst: 00:00:00_00:00:00 (00:00:00:00:00:00)
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 37446, Dst Port: 8443, Seq: 1630, Ack: 7304, Len: 0
+
+No.     Time           Source                Destination           Protocol Length Info
+   3694 27.044552694   127.0.0.1             127.0.0.1             TCP      66     8443 → 37446 [FIN, ACK] Seq=7304 Ack=1631 Win=79232 Len=0 TSval=2416362467 TSecr=2416362467
+
+Frame 3694: 66 bytes on wire (528 bits), 66 bytes captured (528 bits) on interface lo, id 0
+Ethernet II, Src: 00:00:00_00:00:00 (00:00:00:00:00:00), Dst: 00:00:00_00:00:00 (00:00:00:00:00:00)
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 8443, Dst Port: 37446, Seq: 7304, Ack: 1631, Len: 0
+
+No.     Time           Source                Destination           Protocol Length Info
+   3695 27.044567640   127.0.0.1             127.0.0.1             TCP      66     37446 → 8443 [ACK] Seq=1631 Ack=7305 Win=103424 Len=0 TSval=2416362467 TSecr=2416362467
+
+Frame 3695: 66 bytes on wire (528 bits), 66 bytes captured (528 bits) on interface lo, id 0
+Ethernet II, Src: 00:00:00_00:00:00 (00:00:00:00:00:00), Dst: 00:00:00_00:00:00 (00:00:00:00:00:00)
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 37446, Dst Port: 8443, Seq: 1631, Ack: 7305, Len: 0

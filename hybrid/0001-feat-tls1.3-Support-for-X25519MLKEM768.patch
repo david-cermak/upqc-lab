@@ -1,0 +1,634 @@
+From 2b15133b3d0de5621748c55eea3bd5d2c1f2930d Mon Sep 17 00:00:00 2001
+From: David Cermak <cermak@espressif.com>
+Date: Mon, 20 Oct 2025 16:42:17 +0200
+Subject: [PATCH] feat(tls1.3): Support for X25519MLKEM768
+
+psa: Minor fixes to the hybrid group
+---
+ include/mbedtls/ssl.h                 |   2 +
+ library/ssl_client.c                  |  14 ++
+ library/ssl_debug_helpers_generated.c |   2 +
+ library/ssl_hybrid_pqc.c              | 317 ++++++++++++++++++++++++++
+ library/ssl_misc.h                    |  47 +++-
+ library/ssl_tls.c                     |   4 +
+ library/ssl_tls13_client.c            |  48 ++++
+ library/ssl_tls13_keys.c              |  23 ++
+ library/ssl_tls13_server.c            |   5 +
+ 9 files changed, 461 insertions(+), 1 deletion(-)
+ create mode 100644 library/ssl_hybrid_pqc.c
+
+diff --git a/include/mbedtls/ssl.h b/include/mbedtls/ssl.h
+index 3cdddf7d7..e4414c1d5 100644
+--- a/include/mbedtls/ssl.h
++++ b/include/mbedtls/ssl.h
+@@ -246,6 +246,8 @@
+ #define MBEDTLS_SSL_IANA_TLS_GROUP_BP512R1       0x001C
+ #define MBEDTLS_SSL_IANA_TLS_GROUP_X25519        0x001D
+ #define MBEDTLS_SSL_IANA_TLS_GROUP_X448          0x001E
++/* Hybrid Post-Quantum Groups */
++#define MBEDTLS_SSL_IANA_TLS_GROUP_X25519MLKEM768 0x11EC
+ /* Finite Field Groups (DHE) */
+ #define MBEDTLS_SSL_IANA_TLS_GROUP_FFDHE2048     0x0100
+ #define MBEDTLS_SSL_IANA_TLS_GROUP_FFDHE3072     0x0101
+diff --git a/library/ssl_client.c b/library/ssl_client.c
+index 0bd00cd91..cc4546b01 100644
+--- a/library/ssl_client.c
++++ b/library/ssl_client.c
+@@ -229,6 +229,8 @@ static int ssl_write_supported_groups_ext(mbedtls_ssl_context *ssl,
+     *out_len = 0;
+ 
+     MBEDTLS_SSL_DEBUG_MSG(3, ("client hello, adding supported_groups extension"));
++    MBEDTLS_SSL_DEBUG_MSG(1, ("*** DEBUG: Starting supported groups extension processing ***"));
++    printf("*** SIMPLE PRINTF: Starting supported groups extension processing ***\n");
+ 
+     /* Check if we have space for header and length fields:
+      * - extension_type            (2 bytes)
+@@ -248,6 +250,15 @@ static int ssl_write_supported_groups_ext(mbedtls_ssl_context *ssl,
+         int propose_group = 0;
+ 
+         MBEDTLS_SSL_DEBUG_MSG(3, ("got supported group(%04x)", *group_list));
++        
++        // DEBUG: Print group ID for X25519MLKEM768 testing
++        if (*group_list == 0x11EC) {
++            MBEDTLS_SSL_DEBUG_MSG(1, ("*** CLIENT SENDING X25519MLKEM768 GROUP ID: 0x11EC ***"));
++        }
++        
++        // DEBUG: Print all groups being processed
++        MBEDTLS_SSL_DEBUG_MSG(1, ("Processing group: 0x%04x", *group_list));
++        printf("*** SIMPLE PRINTF: Processing group: 0x%04x ***\n", *group_list);
+ 
+ #if defined(MBEDTLS_SSL_TLS1_3_KEY_EXCHANGE_MODE_SOME_EPHEMERAL_ENABLED)
+         if (flags & SSL_WRITE_SUPPORTED_GROUPS_EXT_TLS1_3_FLAG) {
+@@ -282,6 +293,9 @@ static int ssl_write_supported_groups_ext(mbedtls_ssl_context *ssl,
+             MBEDTLS_SSL_DEBUG_MSG(3, ("NamedGroup: %s ( %x )",
+                                       mbedtls_ssl_named_group_to_str(*group_list),
+                                       *group_list));
++            printf("*** SIMPLE PRINTF: WRITING GROUP TO WIRE: 0x%04x ***\n", *group_list);
++        } else {
++            printf("*** SIMPLE PRINTF: SKIPPING GROUP (propose_group=0): 0x%04x ***\n", *group_list);
+         }
+     }
+ 
+diff --git a/library/ssl_debug_helpers_generated.c b/library/ssl_debug_helpers_generated.c
+index 808fce737..e5dc43176 100644
+--- a/library/ssl_debug_helpers_generated.c
++++ b/library/ssl_debug_helpers_generated.c
+@@ -48,6 +48,8 @@ const char *mbedtls_ssl_named_group_to_str( uint16_t in )
+         return "x25519";
+     case MBEDTLS_SSL_IANA_TLS_GROUP_X448:
+         return "x448";
++    case MBEDTLS_SSL_IANA_TLS_GROUP_X25519MLKEM768:
++        return "x25519mlkem768";
+     case MBEDTLS_SSL_IANA_TLS_GROUP_FFDHE2048:
+         return "ffdhe2048";
+     case MBEDTLS_SSL_IANA_TLS_GROUP_FFDHE3072:
+diff --git a/library/ssl_hybrid_pqc.c b/library/ssl_hybrid_pqc.c
+new file mode 100644
+index 000000000..608091308
+--- /dev/null
++++ b/library/ssl_hybrid_pqc.c
+@@ -0,0 +1,317 @@
++/*
++ *  Hybrid X25519MLKEM768 implementation for TLS 1.3
++ *
++ *  Copyright The Mbed TLS Contributors
++ *  SPDX-License-Identifier: Apache-2.0
++ *
++ *  Licensed under the Apache License, Version 2.0 (the "License"); you may
++ *  not use this file except in compliance with the License.
++ *  You may obtain a copy of the License at
++ *
++ *  http://www.apache.org/licenses/LICENSE-2.0
++ *
++ *  Unless required by applicable law or agreed to in writing, software
++ *  distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
++ *  WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ *  See the License for the specific language governing permissions and
++ *  limitations under the License.
++ */
++
++#include "ssl_client.h"
++#include "ssl_misc.h"
++#include "mbedtls/platform.h"
++#include "mbedtls/ssl.h"
++#include "mbedtls/debug.h"
++#include "mbedtls/ecdh.h"
++#include "mbedtls/ecp.h"
++#include "psa/crypto.h"
++#include "psa_util_internal.h"
++/* Local PSA error translation to align with other TLS1.3 files */
++static int local_err_translation(psa_status_t status)
++{
++    return psa_status_to_mbedtls(status, psa_to_ssl_errors,
++                                 ARRAY_LENGTH(psa_to_ssl_errors),
++                                 psa_generic_status_to_mbedtls);
++}
++#define PSA_TO_MBEDTLS_ERR(status) local_err_translation(status)
++#include <mbedtls/ctr_drbg.h>
++
++#include <string.h>
++#include "mlkem768.h"
++
++#define MLKEM768_PUBLIC_KEY_LEN  1184
++#define MLKEM768_SECRET_KEY_LEN  2400
++#define MLKEM768_CIPHERTEXT_LEN  1088
++#define MLKEM768_SHARED_SECRET_LEN 32
++
++#define X25519_PUBLIC_KEY_LEN    32
++#define X25519_PRIVATE_KEY_LEN   32
++#define X25519_SHARED_SECRET_LEN 32
++
++#define HYBRID_PUBLIC_KEY_LEN    (MLKEM768_PUBLIC_KEY_LEN + X25519_PUBLIC_KEY_LEN)  // 1216
++#define HYBRID_CIPHERTEXT_LEN    (MLKEM768_CIPHERTEXT_LEN + X25519_PUBLIC_KEY_LEN)  // 1120
++#define HYBRID_SHARED_SECRET_LEN (MLKEM768_SHARED_SECRET_LEN + X25519_SHARED_SECRET_LEN)  // 64
++
++int mbedtls_ssl_tls13_generate_hybrid_x25519mlkem768_key_exchange(
++    mbedtls_ssl_context *ssl,
++    unsigned char *buf,
++    unsigned char *end,
++    size_t *out_len)
++{
++    int ret = MBEDTLS_ERR_ERROR_CORRUPTION_DETECTED;
++    mbedtls_ssl_handshake_params *handshake = ssl->handshake;
++    mlkem768_ctx_t mlkem_ctx;
++    unsigned char *x25519_pk = NULL;
++    psa_key_attributes_t x_attrs = PSA_KEY_ATTRIBUTES_INIT;
++    size_t x25519_pk_len = 0;
++
++    *out_len = 0;
++
++    printf("*** Generating hybrid X25519MLKEM768 key exchange ***\n");
++
++    /* Check buffer space */
++    if ((size_t)(end - buf) < HYBRID_PUBLIC_KEY_LEN) {
++        printf("*** Insufficient buffer space for hybrid key exchange ***\n");
++        return MBEDTLS_ERR_SSL_BUFFER_TOO_SMALL;
++    }
++
++    /* Initialize ML-KEM-768 */
++    ret = mlkem768_init(&mlkem_ctx);
++    if (ret != 0) {
++        printf("*** Failed to initialize ML-KEM-768 ***\n");
++        return MBEDTLS_ERR_SSL_INTERNAL_ERROR;
++    }
++
++    /* Generate ML-KEM-768 keypair */
++    ret = mlkem768_keypair(&mlkem_ctx);
++    if (ret != 0) {
++        printf("*** Failed to generate ML-KEM-768 keypair ***\n");
++        mlkem768_cleanup(&mlkem_ctx);
++        return MBEDTLS_ERR_SSL_INTERNAL_ERROR;
++    }
++
++    /* Allocate memory for X25519 public key */
++    x25519_pk = mbedtls_calloc(1, X25519_PUBLIC_KEY_LEN);
++    if (x25519_pk == NULL) {
++        printf("*** Failed to allocate memory for X25519 keys ***\n");
++        mlkem768_cleanup(&mlkem_ctx);
++        return MBEDTLS_ERR_SSL_ALLOC_FAILED;
++    }
++
++    /* Generate X25519 keypair via PSA and export raw public key (32 bytes) */
++    psa_status_t status;
++    psa_set_key_usage_flags(&x_attrs, PSA_KEY_USAGE_DERIVE | PSA_KEY_USAGE_EXPORT);
++    psa_set_key_algorithm(&x_attrs, PSA_ALG_ECDH);
++    psa_set_key_type(&x_attrs, PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_MONTGOMERY));
++    psa_set_key_bits(&x_attrs, 255);
++    status = psa_generate_key(&x_attrs, &handshake->xxdh_psa_privkey);
++    if (status != PSA_SUCCESS) {
++        ret = PSA_TO_MBEDTLS_ERR(status);
++        printf("*** PSA X25519 keygen failed: %d ***\n", ret);
++        goto cleanup;
++    }
++    status = psa_export_public_key(handshake->xxdh_psa_privkey,
++                                   x25519_pk, X25519_PUBLIC_KEY_LEN, &x25519_pk_len);
++    if (status != PSA_SUCCESS || x25519_pk_len != X25519_PUBLIC_KEY_LEN) {
++        ret = PSA_TO_MBEDTLS_ERR(status);
++        printf("*** PSA X25519 export public key failed: %d (len=%zu) ***\n", ret, x25519_pk_len);
++        goto cleanup;
++    }
++
++    /* Store keys in handshake context */
++    handshake->mlx_mlkem_sk = mbedtls_calloc(1, MLKEM768_SECRET_KEY_LEN);
++    if (handshake->mlx_mlkem_sk == NULL) {
++        printf("*** Failed to allocate memory for ML-KEM secret key ***\n");
++        ret = MBEDTLS_ERR_SSL_ALLOC_FAILED;
++        goto cleanup;
++    }
++
++    // For now, we'll store the context and extract the key later
++    handshake->mlx_mlkem_sk_len = MLKEM768_SECRET_KEY_LEN;
++    handshake->hybrid_state_allocated = 1;
++
++    /* Serialize hybrid public key: ML-KEM pk || X25519 pk */
++    // Get ML-KEM public key from context
++    memcpy(buf, mlkem_ctx.public_key, MLKEM768_PUBLIC_KEY_LEN);
++    memcpy(buf + MLKEM768_PUBLIC_KEY_LEN, x25519_pk, X25519_PUBLIC_KEY_LEN);
++    *out_len = HYBRID_PUBLIC_KEY_LEN;
++
++    /* Copy ML-KEM secret key to handshake context */
++    memcpy(handshake->mlx_mlkem_sk, mlkem_ctx.secret_key, MLKEM768_SECRET_KEY_LEN);
++
++    printf("*** Generated hybrid key exchange: %zu bytes ***\n", *out_len);
++
++    ret = 0;
++
++cleanup:
++    /* Clean up temporary allocations */
++    if (x25519_pk != NULL) {
++        mbedtls_free(x25519_pk);
++    }
++
++    mlkem768_cleanup(&mlkem_ctx);
++
++    return ret;
++}
++
++int mbedtls_ssl_tls13_parse_hybrid_x25519mlkem768_key_share(
++    mbedtls_ssl_context *ssl,
++    const unsigned char *buf,
++    size_t buf_len)
++{
++    int ret = MBEDTLS_ERR_ERROR_CORRUPTION_DETECTED;
++    mbedtls_ssl_handshake_params *handshake = ssl->handshake;
++    mlkem768_ctx_t mlkem_ctx;
++    unsigned char *mlkem_ct = NULL;
++    unsigned char *x25519_pk_s = NULL;
++    unsigned char *mlkem_ss = NULL;
++    unsigned char *x25519_ss = NULL;
++    unsigned char *hybrid_ss = NULL;
++    psa_key_attributes_t key_attributes = PSA_KEY_ATTRIBUTES_INIT;
++
++    printf("*** Parsing hybrid X25519MLKEM768 key share ***\n");
++
++    /* The input buffer starts with a 2-byte key_exchange length, followed by
++     * key_exchange bytes: ML-KEM ct (1088) || X25519 pk_s (32) */
++    if (buf_len < 2) {
++        printf("*** Invalid key_share buffer (too short for length): %zu ***\n", buf_len);
++        return MBEDTLS_ERR_SSL_ILLEGAL_PARAMETER;
++    }
++    uint16_t key_exchange_len = MBEDTLS_GET_UINT16_BE(buf, 0);
++    if (key_exchange_len != HYBRID_CIPHERTEXT_LEN) {
++        printf("*** Invalid hybrid key_exchange_len: %u (expected %d) ***\n",
++               (unsigned) key_exchange_len, HYBRID_CIPHERTEXT_LEN);
++        return MBEDTLS_ERR_SSL_ILLEGAL_PARAMETER;
++    }
++    if (buf_len < 2 + key_exchange_len) {
++        printf("*** Truncated key_share: buf_len=%zu, need=%u ***\n",
++               buf_len, (unsigned) (2 + key_exchange_len));
++        return MBEDTLS_ERR_SSL_ILLEGAL_PARAMETER;
++    }
++    const unsigned char *key_exchange = buf + 2;
++
++    /* Check if we have the required state */
++    if (!handshake->hybrid_state_allocated || handshake->mlx_mlkem_sk == NULL) {
++        printf("*** Missing hybrid state for key share parsing ***\n");
++        return MBEDTLS_ERR_SSL_INTERNAL_ERROR;
++    }
++
++    /* Initialize ML-KEM-768 */
++    ret = mlkem768_init(&mlkem_ctx);
++    if (ret != 0) {
++        printf("*** Failed to initialize ML-KEM-768 ***\n");
++        return MBEDTLS_ERR_SSL_INTERNAL_ERROR;
++    }
++
++    /* Allocate memory */
++    mlkem_ct = mbedtls_calloc(1, MLKEM768_CIPHERTEXT_LEN);
++    x25519_pk_s = mbedtls_calloc(1, X25519_PUBLIC_KEY_LEN);
++    mlkem_ss = mbedtls_calloc(1, MLKEM768_SHARED_SECRET_LEN);
++    x25519_ss = mbedtls_calloc(1, X25519_SHARED_SECRET_LEN);
++    hybrid_ss = mbedtls_calloc(1, HYBRID_SHARED_SECRET_LEN);
++
++    if (mlkem_ct == NULL || x25519_pk_s == NULL || mlkem_ss == NULL ||
++        x25519_ss == NULL || hybrid_ss == NULL) {
++        printf("*** Failed to allocate memory for key share parsing ***\n");
++        ret = MBEDTLS_ERR_SSL_ALLOC_FAILED;
++        goto cleanup;
++    }
++
++    /* Parse server key share: ML-KEM ct || X25519 pk_s */
++    memcpy(mlkem_ct, key_exchange, MLKEM768_CIPHERTEXT_LEN);
++    memcpy(x25519_pk_s, key_exchange + MLKEM768_CIPHERTEXT_LEN, X25519_PUBLIC_KEY_LEN);
++
++    /* Set up ML-KEM context with our secret key */
++    memcpy(mlkem_ctx.secret_key, handshake->mlx_mlkem_sk, MLKEM768_SECRET_KEY_LEN);
++
++    /* Decapsulate ML-KEM shared secret */
++    ret = mlkem768_decaps(&mlkem_ctx, mlkem_ct);
++    if (ret != 0) {
++        printf("*** Failed to decapsulate ML-KEM shared secret ***\n");
++        ret = MBEDTLS_ERR_SSL_INTERNAL_ERROR;
++        goto cleanup;
++    }
++
++    /* Copy ML-KEM shared secret */
++    memcpy(mlkem_ss, mlkem_ctx.shared_secret, MLKEM768_SHARED_SECRET_LEN);
++
++    /* Compute X25519 shared secret via PSA to match TLS ECDHE path semantics */
++    psa_algorithm_t alg = PSA_ALG_ECDH;
++    psa_status_t status;
++    size_t olen = 0;
++
++    psa_set_key_usage_flags(&key_attributes, PSA_KEY_USAGE_DERIVE);
++    psa_set_key_algorithm(&key_attributes, alg);
++    psa_set_key_type(&key_attributes, PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_MONTGOMERY));
++    psa_set_key_bits(&key_attributes, 255);
++
++    /* Use the PSA private key generated during ClientHello for X25519 */
++    if (mbedtls_svc_key_id_is_null(handshake->xxdh_psa_privkey)) {
++        printf("*** Missing PSA X25519 private key in handshake ***\n");
++        ret = MBEDTLS_ERR_SSL_INTERNAL_ERROR;
++        goto cleanup;
++    }
++
++    status = psa_raw_key_agreement(alg, handshake->xxdh_psa_privkey,
++                                   x25519_pk_s, X25519_PUBLIC_KEY_LEN,
++                                   x25519_ss, X25519_SHARED_SECRET_LEN, &olen);
++    if (status != PSA_SUCCESS || olen != X25519_SHARED_SECRET_LEN) {
++        ret = PSA_TO_MBEDTLS_ERR(status);
++        printf("*** PSA X25519 key agreement failed: %d (olen=%zu) ***\n", ret, olen);
++        goto cleanup;
++    }
++
++    /* Combine shared secrets: ML-KEM ss || X25519 ss */
++    memcpy(hybrid_ss, mlkem_ss, MLKEM768_SHARED_SECRET_LEN);
++    memcpy(hybrid_ss + MLKEM768_SHARED_SECRET_LEN, x25519_ss, X25519_SHARED_SECRET_LEN);
++
++    /* Store the hybrid shared secret in the handshake context for key derivation */
++    memcpy(handshake->hybrid_ss, hybrid_ss, HYBRID_SHARED_SECRET_LEN);
++    handshake->hybrid_ss_len = HYBRID_SHARED_SECRET_LEN;
++    handshake->hybrid_ss_valid = 1;
++    printf("*** Computed hybrid shared secret: %d bytes (stored) ***\n", HYBRID_SHARED_SECRET_LEN);
++
++    ret = 0;
++
++cleanup:
++    /* Clean up temporary allocations */
++    if (mlkem_ct != NULL) {
++        mbedtls_free(mlkem_ct);
++    }
++    if (x25519_pk_s != NULL) {
++        mbedtls_free(x25519_pk_s);
++    }
++    if (mlkem_ss != NULL) {
++        mbedtls_platform_zeroize(mlkem_ss, MLKEM768_SHARED_SECRET_LEN);
++        mbedtls_free(mlkem_ss);
++    }
++    if (x25519_ss != NULL) {
++        mbedtls_platform_zeroize(x25519_ss, X25519_SHARED_SECRET_LEN);
++        mbedtls_free(x25519_ss);
++    }
++    if (hybrid_ss != NULL) {
++        mbedtls_platform_zeroize(hybrid_ss, HYBRID_SHARED_SECRET_LEN);
++        mbedtls_free(hybrid_ss);
++    }
++
++    /* Do not destroy handshake->xxdh_psa_privkey here; TLS will manage it. */
++
++    mlkem768_cleanup(&mlkem_ctx);
++
++    return ret;
++}
++
++int mbedtls_ssl_tls13_cleanup_hybrid_state(mbedtls_ssl_context *ssl)
++{
++    mbedtls_ssl_handshake_params *handshake = ssl->handshake;
++
++    if (handshake->hybrid_state_allocated) {
++        mbedtls_platform_zeroize(handshake->mlx_mlkem_sk, handshake->mlx_mlkem_sk_len);
++        mbedtls_free(handshake->mlx_mlkem_sk);
++        handshake->mlx_mlkem_sk = NULL;
++        handshake->mlx_mlkem_sk_len = 0;
++        mbedtls_platform_zeroize(handshake->x25519_priv, sizeof(handshake->x25519_priv));
++        handshake->hybrid_state_allocated = 0;
++    }
++    return 0;
++}
+diff --git a/library/ssl_misc.h b/library/ssl_misc.h
+index faa1b5ec0..373a2f146 100644
+--- a/library/ssl_misc.h
++++ b/library/ssl_misc.h
+@@ -889,6 +889,25 @@ struct mbedtls_ssl_handshake_params {
+ #endif /* MBEDTLS_SSL_CLI_C &&
+           ( MBEDTLS_SSL_PROTO_DTLS ||
+             MBEDTLS_SSL_PROTO_TLS1_3 ) */
++
++    /* Hybrid X25519MLKEM768 state for TLS 1.3 */
++#if defined(MBEDTLS_SSL_PROTO_TLS1_3) && defined(UPQC_ENABLE_HYBRID_11EC)
++    /* ML-KEM-768 secret key (2400 bytes) */
++    uint8_t *mlx_mlkem_sk;
++    size_t mlx_mlkem_sk_len;
++    
++    /* X25519 private key (32 bytes) */
++    uint8_t x25519_priv[32];
++    
++    /* Flag to track if hybrid state is allocated */
++    uint8_t hybrid_state_allocated;
++
++    /* Hybrid PQC: store computed 64B shared secret (ML-KEM ss || X25519 ss) */
++    uint8_t hybrid_ss[64];
++    size_t hybrid_ss_len;
++    uint8_t hybrid_ss_valid;
++#endif /* MBEDTLS_SSL_PROTO_TLS1_3 && UPQC_ENABLE_HYBRID_11EC */
++
+ #if defined(MBEDTLS_SSL_SRV_C) && defined(MBEDTLS_SSL_PROTO_DTLS)
+     unsigned char cookie_verify_result; /*!< Srv: flag for sending a cookie */
+ #endif /* MBEDTLS_SSL_SRV_C && MBEDTLS_SSL_PROTO_DTLS */
+@@ -2365,7 +2384,8 @@ static inline int mbedtls_ssl_tls13_named_group_is_ecdhe(uint16_t named_group)
+            named_group == MBEDTLS_SSL_IANA_TLS_GROUP_SECP256R1 ||
+            named_group == MBEDTLS_SSL_IANA_TLS_GROUP_SECP384R1 ||
+            named_group == MBEDTLS_SSL_IANA_TLS_GROUP_SECP521R1 ||
+-           named_group == MBEDTLS_SSL_IANA_TLS_GROUP_X448;
++           named_group == MBEDTLS_SSL_IANA_TLS_GROUP_X448     ||
++           named_group == MBEDTLS_SSL_IANA_TLS_GROUP_X25519MLKEM768;
+ }
+ 
+ static inline int mbedtls_ssl_tls13_named_group_is_ffdh(uint16_t named_group)
+@@ -2394,6 +2414,11 @@ static inline int mbedtls_ssl_named_group_is_offered(
+ 
+ static inline int mbedtls_ssl_named_group_is_supported(uint16_t named_group)
+ {
++    /* Support for X25519MLKEM768 hybrid group */
++    if (named_group == MBEDTLS_SSL_IANA_TLS_GROUP_X25519MLKEM768) {
++        return 1;  // TODO: Implement proper support check
++    }
++    
+ #if defined(PSA_WANT_ALG_ECDH)
+     if (mbedtls_ssl_tls13_named_group_is_ecdhe(named_group)) {
+         if (mbedtls_ssl_get_ecp_group_id_from_tls_id(named_group) !=
+@@ -2811,6 +2836,26 @@ int mbedtls_ssl_tls13_read_public_xxdhe_share(mbedtls_ssl_context *ssl,
+ 
+ #endif /* PSA_WANT_ALG_ECDH || PSA_WANT_ALG_FFDH */
+ 
++#if defined(MBEDTLS_SSL_PROTO_TLS1_3) && defined(UPQC_ENABLE_HYBRID_11EC)
++
++MBEDTLS_CHECK_RETURN_CRITICAL
++int mbedtls_ssl_tls13_generate_hybrid_x25519mlkem768_key_exchange(
++    mbedtls_ssl_context *ssl,
++    unsigned char *buf,
++    unsigned char *end,
++    size_t *out_len);
++
++MBEDTLS_CHECK_RETURN_CRITICAL
++int mbedtls_ssl_tls13_parse_hybrid_x25519mlkem768_key_share(
++    mbedtls_ssl_context *ssl,
++    const unsigned char *buf,
++    size_t buf_len);
++
++MBEDTLS_CHECK_RETURN_CRITICAL
++int mbedtls_ssl_tls13_cleanup_hybrid_state(mbedtls_ssl_context *ssl);
++
++#endif /* MBEDTLS_SSL_PROTO_TLS1_3 && UPQC_ENABLE_HYBRID_11EC */
++
+ static inline int mbedtls_ssl_tls13_cipher_suite_is_offered(
+     mbedtls_ssl_context *ssl, int cipher_suite)
+ {
+diff --git a/library/ssl_tls.c b/library/ssl_tls.c
+index 18e1ccbdf..b9a26835d 100644
+--- a/library/ssl_tls.c
++++ b/library/ssl_tls.c
+@@ -5666,6 +5666,8 @@ void mbedtls_ssl_config_init(mbedtls_ssl_config *conf)
+  * about this list.
+  */
+ static const uint16_t ssl_preset_default_groups[] = {
++    /* Hybrid Post-Quantum Groups - Add X25519MLKEM768 first for testing */
++    MBEDTLS_SSL_IANA_TLS_GROUP_X25519MLKEM768,
+ #if defined(MBEDTLS_ECP_HAVE_CURVE25519)
+     MBEDTLS_SSL_IANA_TLS_GROUP_X25519,
+ #endif
+@@ -6360,6 +6362,8 @@ static const struct {
+ #if defined(MBEDTLS_ECP_HAVE_CURVE448)
+     { 30, MBEDTLS_ECP_DP_CURVE448, PSA_ECC_FAMILY_MONTGOMERY, 448 },
+ #endif
++    /* Hybrid Post-Quantum Groups - Map X25519MLKEM768 to X25519 for compatibility */
++    { 0x11EC, MBEDTLS_ECP_DP_CURVE25519, PSA_ECC_FAMILY_MONTGOMERY, 255 },
+     { 0, MBEDTLS_ECP_DP_NONE, 0, 0 },
+ };
+ 
+diff --git a/library/ssl_tls13_client.c b/library/ssl_tls13_client.c
+index 78a069f79..ea121f44b 100644
+--- a/library/ssl_tls13_client.c
++++ b/library/ssl_tls13_client.c
+@@ -301,6 +301,44 @@ static int ssl_tls13_write_key_share_ext(mbedtls_ssl_context *ssl,
+      * only one key share entry is allowed.
+      */
+     client_shares = p;
++    printf("*** UPQC_ENABLE_HYBRID_11EC defined: %d ***\n", 
++#ifdef UPQC_ENABLE_HYBRID_11EC
++        1
++#else
++        0
++#endif
++    );
++#if defined(UPQC_ENABLE_HYBRID_11EC)
++        if (group_id == MBEDTLS_SSL_IANA_TLS_GROUP_X25519MLKEM768) {
++            printf("*** HYBRID GROUP DETECTED: 0x%04x ***\n", group_id);
++            /* Pointer to group */
++            unsigned char *group = p;
++            /* Length of key_exchange */
++            size_t key_exchange_len = 0;
++
++            /* Check there is space for header of KeyShareEntry
++             * - group                  (2 bytes)
++             * - key_exchange_length    (2 bytes)
++             */
++            MBEDTLS_SSL_CHK_BUF_PTR(p, end, 4);
++            p += 4;
++            printf("*** CALLING HYBRID KEY EXCHANGE FUNCTION ***\n");
++            ret = mbedtls_ssl_tls13_generate_hybrid_x25519mlkem768_key_exchange(
++                ssl, p, end, &key_exchange_len);
++            printf("*** HYBRID KEY EXCHANGE RESULT: ret=%d, len=%zu ***\n", ret, key_exchange_len);
++            p += key_exchange_len;
++            if (ret != 0) {
++                printf("*** client hello: failed generating hybrid key exchange ***\n");
++                return ret;
++            }
++
++            /* Write group */
++            MBEDTLS_PUT_UINT16_BE(group_id, group, 0);
++            /* Write key_exchange_length */
++            MBEDTLS_PUT_UINT16_BE(key_exchange_len, group, 2);
++            printf("*** HYBRID KEY SHARE WRITTEN: %zu bytes ***\n", key_exchange_len);
++        } else
++#endif /* UPQC_ENABLE_HYBRID_11EC */
+ #if defined(PSA_WANT_ALG_ECDH) || defined(PSA_WANT_ALG_FFDH)
+     if (mbedtls_ssl_tls13_named_group_is_ecdhe(group_id) ||
+         mbedtls_ssl_tls13_named_group_is_ffdh(group_id)) {
+@@ -490,6 +528,16 @@ static int ssl_tls13_parse_key_share_ext(mbedtls_ssl_context *ssl,
+         return MBEDTLS_ERR_SSL_HANDSHAKE_FAILURE;
+     }
+ 
++#if defined(UPQC_ENABLE_HYBRID_11EC)
++    if (group == MBEDTLS_SSL_IANA_TLS_GROUP_X25519MLKEM768) {
++        MBEDTLS_SSL_DEBUG_MSG(2,
++                              ("Hybrid group name: %s", mbedtls_ssl_named_group_to_str(group)));
++        ret = mbedtls_ssl_tls13_parse_hybrid_x25519mlkem768_key_share(ssl, p, end - p);
++        if (ret != 0) {
++            return ret;
++        }
++    } else
++#endif /* UPQC_ENABLE_HYBRID_11EC */
+ #if defined(MBEDTLS_SSL_TLS1_3_KEY_EXCHANGE_MODE_SOME_EPHEMERAL_ENABLED)
+     if (mbedtls_ssl_tls13_named_group_is_ecdhe(group) ||
+         mbedtls_ssl_tls13_named_group_is_ffdh(group)) {
+diff --git a/library/ssl_tls13_keys.c b/library/ssl_tls13_keys.c
+index 1967883b6..b13d48906 100644
+--- a/library/ssl_tls13_keys.c
++++ b/library/ssl_tls13_keys.c
+@@ -1479,6 +1479,22 @@ static int ssl_tls13_key_schedule_stage_handshake(mbedtls_ssl_context *ssl)
+      * are derived in the handshake secret derivation stage.
+      */
+     if (mbedtls_ssl_tls13_key_exchange_mode_with_ephemeral(ssl)) {
++#if defined(UPQC_ENABLE_HYBRID_11EC)
++        if (handshake->offered_group_id == MBEDTLS_SSL_IANA_TLS_GROUP_X25519MLKEM768) {
++            if (!handshake->hybrid_ss_valid || handshake->hybrid_ss_len != 64) {
++                MBEDTLS_SSL_DEBUG_MSG(1, ("Hybrid secret missing/invalid"));
++                return MBEDTLS_ERR_SSL_INTERNAL_ERROR;
++            }
++            shared_secret_len = handshake->hybrid_ss_len;
++            shared_secret = mbedtls_calloc(1, shared_secret_len);
++            if (shared_secret == NULL) {
++                return MBEDTLS_ERR_SSL_ALLOC_FAILED;
++            }
++            memcpy(shared_secret, handshake->hybrid_ss, shared_secret_len);
++            /* Zeroize and invalidate after use below in cleanup */
++            handshake->hybrid_ss_valid = 0;
++        } else
++#endif /* UPQC_ENABLE_HYBRID_11EC */
+         if (mbedtls_ssl_tls13_named_group_is_ecdhe(handshake->offered_group_id) ||
+             mbedtls_ssl_tls13_named_group_is_ffdh(handshake->offered_group_id)) {
+ #if defined(PSA_WANT_ALG_ECDH) || defined(PSA_WANT_ALG_FFDH)
+@@ -1549,6 +1565,13 @@ cleanup:
+     if (shared_secret != NULL) {
+         mbedtls_zeroize_and_free(shared_secret, shared_secret_len);
+     }
++    /* Clear hybrid secret kept in handshake */
++#if defined(UPQC_ENABLE_HYBRID_11EC)
++    if (handshake->hybrid_ss_len) {
++        mbedtls_platform_zeroize(handshake->hybrid_ss, handshake->hybrid_ss_len);
++        handshake->hybrid_ss_len = 0;
++    }
++#endif
+ 
+     return ret;
+ }
+diff --git a/library/ssl_tls13_server.c b/library/ssl_tls13_server.c
+index 5757d2018..ef22a2339 100644
+--- a/library/ssl_tls13_server.c
++++ b/library/ssl_tls13_server.c
+@@ -862,6 +862,11 @@ static int ssl_tls13_parse_supported_groups_ext(mbedtls_ssl_context *ssl,
+                               ("got named group: %s(%04x)",
+                                mbedtls_ssl_named_group_to_str(named_group),
+                                named_group));
++        
++        // DEBUG: Print group ID for X25519MLKEM768 testing
++        if (named_group == 0x11EC) {
++            MBEDTLS_SSL_DEBUG_MSG(1, ("*** FOUND X25519MLKEM768 GROUP ID: 0x11EC ***"));
++        }
+ 
+         if (!mbedtls_ssl_named_group_is_offered(ssl, named_group) ||
+             !mbedtls_ssl_named_group_is_supported(named_group) ||
+-- 
+2.43.0
+

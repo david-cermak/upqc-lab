@@ -1,72 +1,122 @@
-| Supported Targets | ESP32 | ESP32-C2 | ESP32-C3 | ESP32-C5 | ESP32-C6 | ESP32-C61 | ESP32-H2 | ESP32-P4 | ESP32-S2 | ESP32-S3 | Linux |
-| ----------------- | ----- | -------- | -------- | -------- | -------- | --------- | -------- | -------- | -------- | -------- | ----- |
+# Hybrid TLS 1.3 Client (mbedTLS + ML‑KEM‑768 + X25519)
 
-# HTTP connection with TLS support using mbedTLS
+This target client establishes a TLS 1.3 connection to an OpenSSL 3.5+ server using the hybrid group X25519MLKEM768 (IANA 0x11EC). The client runs on the ESP‑IDF Linux port (or ESP32) and integrates liboqs ML‑KEM‑768 with mbedTLS’ TLS 1.3 stack.
 
-(See the README.md file in the upper level 'examples' directory for more information about examples.)
+## What’s implemented
+- TLS 1.3 handshake with the hybrid key exchange X25519+ML‑KEM‑768
+- ClientHello KeyShare serialization: ML‑KEM pk (1184) || X25519 pk (32) → 1216 bytes
+- ServerHello KeyShare parsing: ML‑KEM ct (1088) || X25519 pk_s (32) → 1120 bytes
+- Shared secret derivation: ML‑KEM ss (32) || X25519 ss (32) → 64 bytes fed into TLS 1.3 key schedule
 
-Simple HTTPS request example that uses mbedTLS to establish a secure socket connection using the certificate bundle with two custom certificates added for verification:
+## Build and run (Linux port)
+```bash
+# From repo root
+cd hybrid/target_client
+idf.py build
 
-## How to use example
+# In another shell, start an OpenSSL 3.5+ server with the hybrid group:
+# (Use your local OpenSSL 3.5+ install; certs are classical, hybrid affects KEX)
+openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem \
+  -subj '/CN=localhost' -days 1
+openssl s_server -accept 8443 -tls1_3 -cert cert.pem -key key.pem \
+  -www -msg -debug -groups X25519MLKEM768
 
-### Hardware Required
-
-* A development board with ESP32/ESP32-S2/ESP32-C3 SoC (e.g., ESP32-DevKitC, ESP-WROVER-KIT, etc.)
-* A USB cable for power supply and programming
-
-### Configure the project
-
+# Back in the client shell, run the built binary
+./build/https_mbedtls.elf
 ```
-idf.py menuconfig
+You should see “Handshake completed successfully” and the server will print TLS 1.3 and the selected group.
+
+## Quick test (MCP fast test)
+If you prefer the automated path used during development:
+```bash
+# From repo root
+mcp_hybrid-pqc-tester_run_fast_test
 ```
-* Open the project configuration menu (`idf.py menuconfig`) to configure Wi-Fi or Ethernet. See "Establishing Wi-Fi or Ethernet Connection" section in [examples/protocols/README.md](../../README.md) for more details.
+This builds and runs both server and client, capturing both sides’ logs.
 
-### Build and Flash
-
-Build the project and flash it to the board, then run monitor tool to view serial output:
-
+## How to inspect and confirm the hybrid group
+- With tshark on loopback (Linux):
+```bash
+sudo tshark -i lo -f "tcp port 8443"
 ```
-idf.py -p PORT flash monitor
+You will see the TCP 3‑way handshake, a TLS 1.2 “Client Hello” record header (legacy framing), then a TLS 1.3 ServerHello, EncryptedExtensions, etc.
+
+- To decode TLS details (groups, key shares), use:
+```bash
+sudo tshark -i lo -Y "tls.handshake.extensions_supported_groups || tls.handshake.extensions_key_share" -O tls
 ```
+Look for these in ClientHello/ServerHello:
+- Supported Groups extension includes 0x11ec
+- KeyShare (ClientHello): group 0x11ec, key_exchange length 1216
+- KeyShare (ServerHello): group 0x11ec, key_exchange length 1120
 
-(Replace PORT with the name of the serial port to use.)
+Notes:
+- 0x11EC (decimal 4588) = X25519MLKEM768
+- Wireshark may show the ClientHello record as TLS 1.2 due to legacy record‑layer framing; the handshake is TLS 1.3.
 
-(To exit the serial monitor, type ``Ctrl-]``.)
+## High‑level changes in mbedTLS
+The following minimal edits enable the hybrid group end‑to‑end while preserving TLS 1.3 behavior.
 
-See the Getting Started Guide for full steps to configure and use ESP-IDF to build projects.
+- mbedtls/library/ssl_tls13_client.c
+  - ClientHello KeyShare writer now dispatches to a hybrid generator when the offered group is X25519MLKEM768.
+  - ServerHello KeyShare parser dispatches to a hybrid parser for group 0x11EC.
 
-## Example Output
+- mbedtls/library/ssl_hybrid_pqc.c (new helper integration)
+  - mbedtls_ssl_tls13_generate_hybrid_x25519mlkem768_key_exchange(...):
+    - Generates X25519 via PSA Crypto (to align with existing ECDHE paths).
+    - Uses mlkem768_temp component (liboqs) to generate ML‑KEM‑768 keypair.
+    - Serializes ML‑KEM pk || X25519 pk (1216 bytes) into ClientHello KeyShare.
+    - Stores ML‑KEM secret key (client side) for decapsulation on ServerHello.
+  - mbedtls_ssl_tls13_parse_hybrid_x25519mlkem768_key_share(...):
+    - Reads 2‑byte key_exchange length and bounds‑checks.
+    - Splits ML‑KEM ct (1088) and X25519 pk_s (32).
+    - Decapsulates ML‑KEM ss via liboqs and derives X25519 ss via PSA ECDH.
+    - Concatenates to 64B hybrid secret and stores it in the handshake context.
+  - Zeroization of temporary secrets and proper cleanup paths.
 
-```
-I (9599) example_connect: - IPv4 address: 192.168.194.219
-I (9599) example_connect: - IPv6 address: fe80:0000:0000:0000:266f:28ff:fe80:2c74, type: ESP_IP6_ADDR_IS_LINK_LOCAL
-I (9609) example: Seeding the random number generator
-I (9619) example: Attaching the certificate bundle...
-I (9619) example: Setting hostname for TLS session...
-I (9629) example: Setting up the SSL/TLS structure...
-I (9639) example: Connecting to www.howsmyssl.com:443...
-I (10109) example: Connected.
-I (10109) example: Performing the SSL/TLS handshake...
-I (10789) esp-x509-crt-bundle: Certificate validated
-I (15019) example: Verifying peer X.509 certificate...
-I (15019) example: Certificate verified.
-I (15019) example: Cipher suite is TLS-ECDHE-ECDSA-WITH-AES-128-GCM-SHA256
-I (15029) example: Writing HTTP request...
-I (15039) example: 106 bytes written
-I (15039) example: Reading HTTP response...
-HTTP/1.0 200 OK
-Content-Length: 2091
-Access-Control-Allow-Origin: *
-Content-Type: application/json
-Date: Wed, 08 Sep 2021 09:28:59 GMT
-Strict-Transport-Security: max-age=631138519; includeSubdomains; preload
+- mbedtls/library/ssl_tls13_keys.c
+  - In the handshake key schedule, when group is X25519MLKEM768, the 64B hybrid secret replaces the standard (EC)DHE secret as input to HKDF‑Extract.
 
-{"given_cipher_suites":["TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384","TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384","TLS_DHE_RSA_WITH_AES_256_GCM_SHA384","TLS_ECDHE_ECDSA_WITH_AES_256_CCM","TLS_DHE_RSA_WITH_AES_256_CCM","TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384","TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384","TLS_DHE_RSA_WITH_AES_256_CBC_SHA256","TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA","TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA","TLS_DHE_RSA_WITH_AES_256_CBC_SHA","TLS_ECDHE_ECDSA_WITH_AES_256_CCM_8","TLS_DHE_RSA_WITH_AES_256_CCM_8","TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256","TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256","TLS_DHE_RSA_WITH_AES_128_GCM_SHA256","TLS_ECDHE_ECDSA_WITH_AES_128_CCM","TLS_DHE_RSA_WITH_AES_128_CCM","TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256","TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256","TLS_DHE_RSA_WITH_AES_128_CBC_SHA256","TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA","TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA","TLS_DHE_RSA_WITH_AES_128_CBC_SHA","TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8","TLS_DHE_RSA_WITH_AES_128_CCM_8","TLS_RSA_WITH_AES_256_GCM_SHA384","TLS_RSA_WITH_AES_256_CCM","TLS_RSA_WITH_AES_256_CBC_SHA256","TLS_RSA_WITH_AES_256_CBC_SHA","TLS_ECDH_RSA_WITH_AES_256_GCM_SHA384","TLS_ECDH_RSA_WITH_AES_256_CBC_SHA384","TLS_ECDH_RSA_WITH_AES_256_CBC_SHA","TLS_ECDH_ECDSA_WITH_AES_256_GCM_SHA384","TLS_ECDH_ECDSA_WITH_AES_256_CBC_SHA384","TLS_ECDH_ECDSA_WITH_AES_256_CBC_SHA","TLS_RSA_WITH_AES_256_CCM_8","TLS_RSA_WITH_AES_128_GCM_SHA256","TLS_RSA_WITH_AES_128_CCM","TLS_RSA_WITH_AES_128_CBC_SHA256","TLS_RSA_WITH_AES_128_CBC_SHA","TLS_ECDH_RSA_WITH_AES_128_GCM_SHA256","TLS_ECDH_RSA_WITH_AES_128_CBC_SHA256","TLS_ECDH_RSA_WITH_AES_128_CBC_SHA","TLS_ECDH_ECDSA_WITH_AES_128_GCM_SHA256","TLS_ECDH_ECDSA_WITH_AES_128_CBC_SHA256","TLS_ECDH_ECDSA_WITH_AES_128_CBC_SHA","TLS_RSA_WITH_AES_128_CCM_8","TLS_EMPTY_RENEGOTIATION_INFO_SCSV"],"ephemeral_keys_supported":true,"session_ticket_supported":true,"tls_compression_supported":false,"unknown_cipher_suite_supported":false,"beast_vuln":false,"able_to_detect_n_minus_one_splitting":false,"insecure_cipher_suites":{},"tls_version":"TLS 1.2","rating":"Probably Okay"}
-I (15829) example: Completed 1 requests
-Minimum free heap size: 189136 bytes
-I (15839) example: 10...
-I (16839) example: 9...
-I (17839) example: 8...
-I (18839) example: 7...
-I (19839) example: 6...
-```
+- mbedtls/library/ssl_misc.h
+  - Handshake struct extended with:
+    - uint8_t hybrid_ss[64]; size_t hybrid_ss_len; uint8_t hybrid_ss_valid;
+    - uint8_t *mlx_mlkem_sk; size_t mlx_mlkem_sk_len; (client ML‑KEM state)
+
+## ML‑KEM component (liboqs)
+- Component: components/mlkem768_temp
+  - Wraps liboqs ML‑KEM‑768 (and Kyber ref sources) for ESP‑IDF.
+  - Public API in include/mlkem768.h with sizes:
+    - MLKEM768_PUBLIC_KEY_LEN  = 1184
+    - MLKEM768_SECRET_KEY_LEN  = 2400
+    - MLKEM768_CIPHERTEXT_LEN  = 1088
+    - MLKEM768_SHARED_SECRET_LEN = 32
+  - mlkem768.c allocates and exposes buffers on init, and frees/zeroizes on cleanup.
+
+## Wire formats (reference)
+- Client → Server (ClientHello KeyShare):
+  - Group: 0x11EC
+  - key_exchange = ML‑KEM pk (1184) || X25519 pk (32)
+  - Total key_exchange_len = 1216
+
+- Server → Client (ServerHello KeyShare):
+  - Group: 0x11EC
+  - key_exchange = ML‑KEM ct (1088) || X25519 pk_s (32)
+  - Total key_exchange_len = 1120
+
+- Shared secret into TLS 1.3:
+  - hybrid_ss = ML‑KEM ss (32) || X25519 ss (32) (64 bytes)
+
+## Security notes
+- The demo config sets VERIFY_NONE for local interop; enable verification for real networks.
+- Secrets (ML‑KEM sk, intermediate shared secrets, hybrid secret) are zeroized after use.
+- No PSK/0‑RTT/early data are used in these tests.
+
+## Troubleshooting
+- If the server sends a fatal alert early, check the lengths (1216/1120) and that group 0x11EC appears in both ClientHello and ServerHello KeyShare.
+- If Wireshark shows TLS 1.2 for ClientHello, that’s the legacy record‑layer for TLS 1.3; expand the TLS handshake and check the extensions and KeyShare groups.
+
+## References
+- OpenSSL hybrid group: X25519MLKEM768 (IANA 0x11EC)
+- Implementation guide (server): hybrid/linux_server/X25519MLKEM768_Implementation_Guide.md
+- mbedTLS sources changed under: impl/idf/components/mbedtls/mbedtls/library/
+- ML‑KEM component: components/mlkem768_temp
