@@ -13,3 +13,6 @@
 [submodule "impl/mbedtls"]
 	path = impl/mbedtls
 	url = https://github.com/Mbed-TLS/mbedtls.git
+[submodule "impl/idf"]
+	path = impl/idf
+	url = https://github.com/david-cermak/esp-idf.git
