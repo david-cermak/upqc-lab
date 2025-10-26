@@ -121,7 +121,7 @@
 /* #undef OQS_ENABLE_KEM_hqc_256 */
 
 #define OQS_ENABLE_KEM_KYBER 1
-#define OQS_ENABLE_KEM_kyber_512 1
+// #define OQS_ENABLE_KEM_kyber_512 1
 // #define OQS_ENABLE_KEM_kyber_512_avx2 1
 // /* #undef OQS_ENABLE_KEM_kyber_512_aarch64 */
 #define OQS_ENABLE_KEM_kyber_768 1

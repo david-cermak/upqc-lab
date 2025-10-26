@@ -37,9 +37,15 @@
 
 
 /* Constants that aren't configurable in menuconfig */
+#ifdef LOCALHOST_TESTING
 #define WEB_SERVER "127.0.0.1"
 #define WEB_PORT "8443"
 #define WEB_URL "https://127.0.0.1:8443/hello"
+#else
+#define WEB_SERVER "192.168.0.29"
+#define WEB_PORT "8443"
+#define WEB_URL "https://192.168.0.29:8443/hello"
+#endif
 
 static const char *TAG = "example";
 
