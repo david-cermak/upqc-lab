@@ -102,8 +102,8 @@ key->xkey = EVP_PKEY_Q_keygen(key->libctx, key->propq, "X25519");
 
 **Reference**: `providers/implementations/keymgmt/mlx_kmgmt.c:707-711`
 
-### 2. Encapsulation (Client Side)
-The client performs hybrid encapsulation:
+### 2. Encapsulation (Server Side)
+The server performs hybrid encapsulation upon receiving the client's hybrid public key:
 
 ```c
 // ML-KEM encapsulation
@@ -116,8 +116,8 @@ EVP_PKEY_derive(ctx, sbuf, &encap_slen);
 
 **Reference**: `providers/implementations/kem/mlx_kem.c:165-234`
 
-### 3. Decapsulation (Server Side)
-The server performs hybrid decapsulation:
+### 3. Decapsulation (Client Side)
+The client performs hybrid decapsulation after receiving the server's hybrid response:
 
 ```c
 // ML-KEM decapsulation

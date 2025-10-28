@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include "upqc_config.h"
+#include "esp_log.h"
+#define TAG "MLKEM768"
 
 // ML-KEM-768 context implementation
 struct mlkem768_ctx_impl {
@@ -65,15 +67,15 @@ int mlkem768_keypair(mlkem768_ctx_t *ctx)
     if (ctx == NULL || ctx->kem == NULL) {
         return -1;
     }
-
+    ESP_LOGW(TAG, "Generating ML-KEM-768 keypair");
     struct mlkem768_ctx_impl *impl = (struct mlkem768_ctx_impl *)ctx->kem;
-
+    
     // Generate keypair
     OQS_STATUS rc = OQS_KEM_keypair(impl->kem, impl->public_key, impl->secret_key);
     if (rc != OQS_SUCCESS) {
         return -1;
     }
-
+    ESP_LOGW(TAG, "Generated ML-KEM-768 keypair");
     return 0;
 }
 
@@ -82,14 +84,14 @@ int mlkem768_encaps(mlkem768_ctx_t *ctx, const uint8_t *public_key)
     if (ctx == NULL || ctx->kem == NULL || public_key == NULL) {
         return -1;
     }
-
+    ESP_LOGW(TAG, "Encapsulating ML-KEM-768 shared secret");
     struct mlkem768_ctx_impl *impl = (struct mlkem768_ctx_impl *)ctx->kem;
-
     // Encapsulate shared secret
     OQS_STATUS rc = OQS_KEM_encaps(impl->kem, impl->ciphertext, impl->shared_secret, public_key);
     if (rc != OQS_SUCCESS) {
         return -1;
     }
+    ESP_LOGW(TAG, "Encapsulated ML-KEM-768 shared secret");
 
     return 0;
 }
@@ -99,7 +101,7 @@ int mlkem768_decaps(mlkem768_ctx_t *ctx, const uint8_t *ciphertext)
     if (ctx == NULL || ctx->kem == NULL || ciphertext == NULL) {
         return -1;
     }
-
+    ESP_LOGW(TAG, "Decapsulating ML-KEM-768 shared secret");
     struct mlkem768_ctx_impl *impl = (struct mlkem768_ctx_impl *)ctx->kem;
 
     // Decapsulate shared secret
@@ -107,7 +109,7 @@ int mlkem768_decaps(mlkem768_ctx_t *ctx, const uint8_t *ciphertext)
     if (rc != OQS_SUCCESS) {
         return -1;
     }
-
+    ESP_LOGW(TAG, "Decapsulated ML-KEM-768 shared secret");
     return 0;
 }
 
