@@ -91,7 +91,6 @@ style: |
 - Ensure algorithm agility in bootloaders and OTA verifiers
 - PQC replaces RSA/ECDSA in verification; keep symmetric AES (prefer AES‑256)
 
-Refs: [PQShield](https://pqshield.com/secure-boot-considerations-with-pqc/), [NIST](https://www.nist.gov)
 
 ---
 
@@ -102,7 +101,6 @@ Refs: [PQShield](https://pqshield.com/secure-boot-considerations-with-pqc/), [NI
 - LMS/XMSS: stateful hash‑based; small, fast verify; ideal for boot; requires state management
   - standalone
 
-Ref: [ST Wiki](https://wiki.st.com), [PQShield](https://pqshield.com)
 
 ---
 
@@ -112,8 +110,6 @@ Ref: [ST Wiki](https://wiki.st.com), [PQShield](https://pqshield.com)
 - Pros: backward compatibility, defense‑in‑depth; gradual migration
 - Cons: bigger images, more code/latency; plan key slots/versioning
 
-Ref: [PQShield](https://pqshield.com), [wolfSSL/wolfBoot](https://www.wolfssl.com/wolfboot-secure-boot-and-more-unique-features-to-assist-and-optimize-firmware-updates/)
-
 ---
 
 ## Tooling & Libraries
@@ -121,8 +117,6 @@ Ref: [PQShield](https://pqshield.com), [wolfSSL/wolfBoot](https://www.wolfssl.co
 - wolfBoot: LMS/XMSS, ML‑DSA, hybrid auth; portable; HW accel support
 - ST X‑CUBE‑PQC: LMS/XMSS verify, ML‑DSA/ML‑KEM for STM32
 - PQShield PQMicroLib‑Core: tiny PQC for MCUs; constant‑time; DPA (Differential Power Analysis) aware
-
-Refs: [wolfSSL](https://www.wolfssl.com/products/wolfcrypt-post-quantum/), [ST X‑CUBE‑PQC](https://newsroom.st.com/media-center/press-item.html/n4680.html), [PQShield](https://pqshield.com)
 
 ---
 
@@ -133,7 +127,6 @@ Refs: [wolfSSL](https://www.wolfssl.com/products/wolfcrypt-post-quantum/), [ST X
 - Stateful keys: persist counters (LMS/XMSS); define update limits and process
 - Bootloader: new formats/parsers; constant‑time; testing; FIPS/CAVP path
 
-Ref: [ST Wiki](https://wiki.st.com), [PQShield](https://pqshield.com)
 
 ---
 
@@ -204,14 +197,11 @@ sudo tshark -i lo -Y "tls.handshake.extensions_supported_groups || tls.handshake
 
 ## Key Takeaways
 
-- Start at the root of trust: PQ firmware signing, then transport
-  - Next step: PQC Secure Boot
-  - Choose scheme: LMS/XMSS for boot; ML‑DSA if unlimited signing needed
-- Use hybrids during transition; design for algorithm agility
-- Verify interoperability; measure latency and memory on target
-
-- Demos show feasibility on real targets (dedicated channel + TLS 1.3 hybrid)
-- Prototype on target; measure size/latency; add hybrid if mandated
+- Start at the root of trust:
+  - PQ firmware signing,
+  - then transport
+- Use hybrids during transition
+- Design for algorithm agility
 
 ---
 
@@ -221,5 +211,9 @@ sudo tshark -i lo -Y "tls.handshake.extensions_supported_groups || tls.handshake
     - [dedicated-channel](https://github.com/david-cermak/upqc-lab/tree/main/examples#pqc-channel-demo-host--esp32)
     - [hybrid-groups](https://github.com/david-cermak/upqc-lab/tree/main/hybrid)
 * [STFT/TNFL risk](https://postquantum.com/post-quantum/sign-today-forge-sftf-tnfl/?utm_source=chatgpt.com)
+* [NIST](https://www.nist.gov)
+    * [CNSA 2.0 timeline](https://garantir.io/keeping-software-secure-in-a-post-quantum-world/#:~:text=The%20timeline%20for%20adoption%20is,should%20be%20completed%20by%202035)
 
-
+* [wolfSSL](https://www.wolfssl.com/products/wolfcrypt-post-quantum/), [wolfBoot](https://www.wolfssl.com/wolfboot-secure-boot-and-more-unique-features-to-assist-and-optimize-firmware-updates/)
+* [ST X‑CUBE‑PQC](https://newsroom.st.com/media-center/press-item.html/n4680.html)
+* [PQShield](https://pqshield.com), [Secure boot considerations](https://pqshield.com/secure-boot-considerations-with-pqc/)
