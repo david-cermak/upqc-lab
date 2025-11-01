@@ -101,14 +101,7 @@ style: |
 - LMS/XMSS: stateful hash‑based; small, fast verify; ideal for boot; requires state management
   - standalone
 
-
----
-
-## Hybrid Signatures & Crypto Agility
-
-- PQ/T hybrid: sign firmware with classical + PQ; verify both (CNSA 2.0)
-- Pros: backward compatibility, defense‑in‑depth; gradual migration
-- Cons: bigger images, more code/latency; plan key slots/versioning
+**Hybrid Signatures & Crypto Agility**
 
 ---
 
@@ -117,16 +110,6 @@ style: |
 - wolfBoot: LMS/XMSS, ML‑DSA, hybrid auth; portable; HW accel support
 - ST X‑CUBE‑PQC: LMS/XMSS verify, ML‑DSA/ML‑KEM for STM32
 - PQShield PQMicroLib‑Core: tiny PQC for MCUs; constant‑time; DPA (Differential Power Analysis) aware
-
----
-
-## Practical Considerations
-
-- Size: PQ keys/signatures are KB‑scale; budget flash and OTA bandwidth
-- Performance: verify slower than ECDSA; usually OK per‑boot; measure on target
-- Stateful keys: persist counters (LMS/XMSS); define update limits and process
-- Bootloader: new formats/parsers; constant‑time; testing; FIPS/CAVP path
-
 
 ---
 
@@ -185,6 +168,10 @@ Expect: "Handshake completed successfully" and server prints negotiated group `X
 
 ---
 
+![pq-handshake](pq-handshake.png)
+
+---
+
 ## Inspecting the Hybrid Handshake
 
 ```bash
@@ -192,6 +179,8 @@ sudo tshark -i lo -Y "tls.handshake.extensions_supported_groups || tls.handshake
 ```
 - Supported Groups includes `0x11ec`
 - ClientHello KeyShare length `1216`; ServerHello `1120`
+
+* [capture](https://github.com/david-cermak/upqc-lab/blob/main/hybrid/target_client/capture.txt)
 
 ---
 
