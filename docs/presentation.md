@@ -23,7 +23,7 @@ style: |
 ## Why Post-Quantum, Why Now
 
 - **Harvest-now, decrypt-later** risk for long-lived data and devices
-- <mark>**Sign Today, Forge Tomorrow** risk for OTA</mark>
+- <mark>**Trust Now, Forge later** risk for OTA</mark>
 - Embedded/IoT lifetimes span decades; roots of trust must endure
 - Standards have landed: **FIPS 203/204/205**; hybrid transition paths exist
 
@@ -141,7 +141,7 @@ idf.py build flash monitor
 
 ## Demo #1: Dedicated Secure Channel
 
-![dedicated](dedicated-term.png)
+![dedicated](channel-pqc.png)
 
 ---
 
@@ -194,12 +194,37 @@ sudo tshark -i lo -Y "tls.handshake.extensions_supported_groups || tls.handshake
 
 ---
 
+## Timings of ML-KEM-768 on ESP32@160MHz
+
+| Operation | Time (ms) |
+|-----------|-----------|
+| Keypair   | 17.538    |
+| Encaps    | 19.926    |
+| Decaps    | 22.905    |
+
+
+---
+
+## Metrics of ML-KEM-768 on ESP32
+
+| Metric | Value |
+|--------|-------|
+| Stack Used | 15,188 bytes |
+| Heap Usage | 224 bytes |
+
+
+| Component | Total Size | Flash Code (.text) | Flash Data (.rodata) |
+|-----------|------------|-------------------|---------------------|
+| **liboqs_mlkem.a** | **10,756 bytes** | **10,308 bytes** | **448 bytes** |
+
+---
+
 ## Links
 
 * [uPQC-lab](https://github.com/david-cermak/upqc-lab)
     - [dedicated-channel](https://github.com/david-cermak/upqc-lab/tree/main/examples#pqc-channel-demo-host--esp32)
     - [hybrid-groups](https://github.com/david-cermak/upqc-lab/tree/main/hybrid)
-* [STFT/TNFL risk](https://postquantum.com/post-quantum/sign-today-forge-sftf-tnfl/?utm_source=chatgpt.com)
+* [STFT/TNFL risk](https://postquantum.com/post-quantum/trust-now-forge-later/)
 * [NIST](https://www.nist.gov)
     * [CNSA 2.0 timeline](https://garantir.io/keeping-software-secure-in-a-post-quantum-world/#:~:text=The%20timeline%20for%20adoption%20is,should%20be%20completed%20by%202035)
 
