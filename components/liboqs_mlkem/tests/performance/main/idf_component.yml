@@ -1,0 +1,8 @@
+## IDF Component Manager Manifest File
+dependencies:
+  ## Required IDF version
+  idf:
+    version: '>=4.1.0'
+  david-cermak/liboqs_mlkem:
+    version: '*'
+    override_path: ../../..
