@@ -24,6 +24,7 @@ style: |
 
 - **Harvest-now, decrypt-later** risk for long-lived data and devices
 - <mark>**Trust Now, Forge later** risk for OTA</mark>
+  - Forged signatures break secure boot and OTA
 - Embedded/IoT lifetimes span decades; roots of trust must endure
 - Standards have landed: **FIPS 203/204/205**; hybrid transition paths exist
 
@@ -33,7 +34,7 @@ style: |
 
 ## HTTP requests by post-quantum support time series
 
-* From ~15% to ~50% in the last year
+* Public telemetry shows rapid growth (~15% to ~50%) in the last year
 
 ![pqc](pq-adoption.png)
 
@@ -50,11 +51,12 @@ style: |
 
 ## Quantum Threat Landscape
 
-- Shor breaks RSA/ECC
+- Shor’s algorithm breaks RSA/ECC
 - Classical PKI becomes forgeable
 - Practical response: start migration with
     * **crypto agility** 
     * **hybrids**
+- Prioritize integrity use cases (boot/OTA) alongside confidentiality (transport/storage).
 
 ---
 
@@ -69,6 +71,7 @@ style: |
 ## Embedded Constraints
 
 - Tighter RAM/flash, CPU/energy budgets; larger PQ artifacts
+  - e.g., ML‑DSA sigs ~2–3 KB; ML‑KEM public keys ~1.1 KB.
 - Side-channel hardening, careful memory planning, zeroization
 - Prefer constant‑time, vetted implementations; enable crypto agility
 
@@ -134,6 +137,15 @@ idf.py build flash monitor
 
 ## Demo #1: Dedicated Secure Channel
 
+- Dedicated secure channel with ML‑KEM‑512 handshake feeding an AES‑GCM data channel.
+- Server publishes Kyber public key; client encapsulates to derive a shared secret.
+- Both sides derive an AES‑GCM key; subsequent payloads are encrypted symmetrically.
+- This pattern generalizes beyond TLS and fits embedded transports well.
+
+---
+
+## Demo #1: Dedicated Secure Channel
+
 
 ![dedicated](dedicated.png)
 
@@ -145,7 +157,17 @@ idf.py build flash monitor
 
 ---
 
-## Demo #2 — TLS 1.3 Hybrid X25519 + ML‑KEM‑768
+## Demo #1: Overheads and sizing
+
+- KEM handshakes add kilobytes to key shares and about 10ms one‑time latency.
+- ESP32 performs only KEM encapsulation (client side)
+- keypair generation and decapsulation are executed on server side
+- Steady‑state throughput uses symmetric crypto, so data rates remain unchanged.
+- Measure on target hardware; cache and toolchain choices affect timing.
+
+---
+
+## Demo #2: TLS 1.3 Hybrid X25519 + ML‑KEM‑768
 
 - Client: `hybrid/target_client` (ESP‑IDF Linux port or ESP32)
 - Server: OpenSSL 3.5+ with group `X25519MLKEM768` (IANA 0x11EC)
@@ -172,7 +194,16 @@ Expect: "Handshake completed successfully" and server prints negotiated group `X
 
 ---
 
-## Inspecting the Hybrid Handshake
+## Demo #2: TLS 1.3 Hybrid X25519 + ML‑KEM‑768
+
+- X25519MLKEM768 negotiates classical X25519 and ML‑KEM‑768 key shares.
+- Expect larger key shares and slightly longer handshake; connection security strengthens.
+- ClientHello/ServerHello KeyShare lengths grow (~1.1–1.2 KB per side) versus classical‑only.
+- Confirm negotiated hybrid group in server debug output.
+
+---
+
+## Demo #2: Inspecting the Hybrid Handshake
 
 ```bash
 sudo tshark -i lo -Y "tls.handshake.extensions_supported_groups || tls.handshake.extensions_key_share" -O tls
@@ -182,13 +213,14 @@ sudo tshark -i lo -Y "tls.handshake.extensions_supported_groups || tls.handshake
 
 * [capture](https://github.com/david-cermak/upqc-lab/blob/main/hybrid/target_client/capture.txt)
 
+- Use tshark filters for supported_groups and key_share extensions.
+- Confirm both classical and PQ key shares are present and the hybrid group is selected.
+
 ---
 
 ## Key Takeaways
 
-- Start at the root of trust:
-  - PQ firmware signing,
-  - then transport
+- Start with roots of trust (firmware signing), then update transports.
 - Use hybrids during transition
 - Design for algorithm agility
 
@@ -205,7 +237,7 @@ sudo tshark -i lo -Y "tls.handshake.extensions_supported_groups || tls.handshake
 
 ---
 
-## Metrics of ML-KEM-768 on ESP32
+## Footprints of ML-KEM-768 on ESP32
 
 | Metric | Value |
 |--------|-------|
@@ -213,9 +245,18 @@ sudo tshark -i lo -Y "tls.handshake.extensions_supported_groups || tls.handshake
 | Heap Usage | 224 bytes |
 
 
-| Component | Total Size | Flash Code (.text) | Flash Data (.rodata) |
-|-----------|------------|-------------------|---------------------|
-| **liboqs_mlkem.a** | **10,756 bytes** | **10,308 bytes** | **448 bytes** |
+| Total Size | Flash Code (.text) | Flash Data (.rodata) |
+|------------|-------------------|---------------------|
+| 10,8 bytes | 10,3 bytes | 448 bytes |
+
+---
+
+## Metrics on ESP32
+
+- Stack usage ~15 KB; heap ~224 B for ML‑KEM‑768 operations in this demo.
+- Static code size of the ML‑KEM component is modest for embedded targets.
+- Tune stack sizes and minimize dynamic allocation; prefer static buffers.
+- At 160 MHz, ML‑KEM‑768 costs: ~20ms for each operation (keypair, encaps, decaps).
 
 ---
 
