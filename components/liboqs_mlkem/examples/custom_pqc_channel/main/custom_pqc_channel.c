@@ -2,6 +2,8 @@
 #include <string.h>
 #include <stdint.h>
 
+#include "sdkconfig.h"
+
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_random.h"
@@ -11,6 +13,11 @@
 #include "mbedtls/gcm.h"
 #include "mbedtls/hkdf.h"
 #include "mbedtls/md.h"
+
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
 
 // Dedicated secure channel demo:
 // - ML-KEM-768 key exchange using liboqs_mlkem component
@@ -23,6 +30,10 @@
 #define AES_GCM_KEY_SIZE 32
 #define AES_GCM_IV_SIZE  12
 #define AES_GCM_TAG_SIZE 16
+
+// Default TCP settings for the demo transport
+#define CUSTOM_PQC_SERVER_PORT 3333
+#define CUSTOM_PQC_SERVER_ADDR "192.168.0.34"  // Adjust to your server IP when running in client mode
 
 // Simple helper to fill a buffer with random bytes using ESP RNG
 static void fill_random(uint8_t *out, size_t len)
@@ -144,155 +155,356 @@ static void encode_sequence_aad(uint32_t seq, uint8_t aad[4])
     aad[3] = (uint8_t)(seq & 0xFF);
 }
 
-static void run_pqc_channel_demo(void)
+// Transport helpers: abstract plain TCP connection setup so the
+// underlying medium (TCP, UART, PPP, etc.) can be swapped later.
+static int setup_server_connection(void)
 {
-    ESP_LOGI(TAG, "=== Demo: Dedicated Secure Channel with ML-KEM-768 + AES-256-GCM ===");
-    ESP_LOGI(TAG, "Goal: ML-KEM key exchange -> AES-GCM data channel");
+    int listen_fd = -1;
+    int client_fd = -1;
+    int opt = 1;
+    struct sockaddr_in addr = { 0 };
+    socklen_t addr_len = sizeof(addr);
 
-    // Simulated roles: server (keypair + decaps) and client (encaps only)
-    mlkem768_ctx_t server_ctx = {0};
-    mlkem768_ctx_t client_ctx = {0};
+    ESP_LOGI(TAG, "Setting up server socket on port %d", CUSTOM_PQC_SERVER_PORT);
 
-    if (mlkem768_init(&server_ctx) != 0 || mlkem768_init(&client_ctx) != 0) {
-        ESP_LOGE(TAG, "Failed to initialize ML-KEM contexts");
-        goto cleanup;
+    listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (listen_fd < 0) {
+        ESP_LOGE(TAG, "socket() failed");
+        return -1;
+    }
+
+    setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(CUSTOM_PQC_SERVER_PORT);
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    if (bind(listen_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        ESP_LOGE(TAG, "bind() failed");
+        close(listen_fd);
+        return -1;
+    }
+
+    if (listen(listen_fd, 1) < 0) {
+        ESP_LOGE(TAG, "listen() failed");
+        close(listen_fd);
+        return -1;
+    }
+
+    ESP_LOGI(TAG, "Waiting for incoming connection...");
+    client_fd = accept(listen_fd, (struct sockaddr *)&addr, &addr_len);
+    close(listen_fd);
+
+    if (client_fd < 0) {
+        ESP_LOGE(TAG, "accept() failed");
+        return -1;
+    }
+
+    ESP_LOGI(TAG, "Client connected");
+    return client_fd;
+}
+
+static int setup_client_connection(void)
+{
+    int sock = -1;
+    struct sockaddr_in addr = { 0 };
+
+    ESP_LOGI(TAG, "Connecting to server %s:%d", CUSTOM_PQC_SERVER_ADDR, CUSTOM_PQC_SERVER_PORT);
+
+    sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        ESP_LOGE(TAG, "socket() failed");
+        return -1;
+    }
+
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(CUSTOM_PQC_SERVER_PORT);
+
+    if (inet_pton(AF_INET, CUSTOM_PQC_SERVER_ADDR, &addr.sin_addr) <= 0) {
+        ESP_LOGE(TAG, "inet_pton() failed for %s", CUSTOM_PQC_SERVER_ADDR);
+        close(sock);
+        return -1;
+    }
+
+    if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        ESP_LOGE(TAG, "connect() failed");
+        close(sock);
+        return -1;
+    }
+
+    ESP_LOGI(TAG, "Connected to server");
+    return sock;
+}
+
+// Minimal length-prefixed send/recv helpers
+static int send_all(int sock, const uint8_t *buf, size_t len)
+{
+    size_t sent = 0;
+    while (sent < len) {
+        ssize_t r = send(sock, buf + sent, len - sent, 0);
+        if (r <= 0) {
+            return -1;
+        }
+        sent += (size_t)r;
+    }
+    return 0;
+}
+
+static int recv_all(int sock, uint8_t *buf, size_t len)
+{
+    size_t recvd = 0;
+    while (recvd < len) {
+        ssize_t r = recv(sock, buf + recvd, len - recvd, 0);
+        if (r <= 0) {
+            return -1;
+        }
+        recvd += (size_t)r;
+    }
+    return 0;
+}
+
+static int send_with_len(int sock, const uint8_t *buf, uint32_t len)
+{
+    uint32_t net_len = htonl(len);
+    if (send_all(sock, (const uint8_t *)&net_len, sizeof(net_len)) != 0) {
+        return -1;
+    }
+    if (len > 0 && send_all(sock, buf, len) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static int recv_with_len(int sock, uint8_t *buf, size_t max_len, uint32_t *out_len)
+{
+    uint32_t net_len = 0;
+    if (recv_all(sock, (uint8_t *)&net_len, sizeof(net_len)) != 0) {
+        return -1;
+    }
+    uint32_t len = ntohl(net_len);
+    if (len > max_len) {
+        ESP_LOGE(TAG, "Received length %u exceeds buffer %zu", (unsigned)len, max_len);
+        return -1;
+    }
+    if (len > 0 && recv_all(sock, buf, len) != 0) {
+        return -1;
+    }
+    *out_len = len;
+    return 0;
+}
+
+// Handshake helpers: perform ML-KEM handshake over the abstracted transport
+static int pqc_server_handshake(int sock, uint8_t aes_key[AES_GCM_KEY_SIZE])
+{
+    mlkem768_ctx_t ctx = {0};
+    int ret = -1;
+
+    if (mlkem768_init(&ctx) != 0) {
+        ESP_LOGE(TAG, "mlkem768_init (server) failed");
+        return -1;
     }
 
     ESP_LOGI(TAG, "Server generating ML-KEM-%s keypair...", mlkem768_get_algorithm_name());
-    if (mlkem768_keypair(&server_ctx) != 0) {
-        ESP_LOGE(TAG, "Server keypair generation failed");
-        goto cleanup;
+    if (mlkem768_keypair(&ctx) != 0) {
+        ESP_LOGE(TAG, "mlkem768_keypair (server) failed");
+        goto out;
     }
 
-    // "Publish" server public key to client (in a real demo this would go over TCP)
-    ESP_LOGI(TAG, "Client encapsulating shared secret to server public key");
-    if (mlkem768_encaps(&client_ctx, server_ctx.public_key) != 0) {
-        ESP_LOGE(TAG, "Client encapsulation failed");
-        goto cleanup;
+    uint32_t pk_len = (uint32_t)mlkem768_get_public_key_len();
+    if (send_with_len(sock, ctx.public_key, pk_len) != 0) {
+        ESP_LOGE(TAG, "Failed to send public key");
+        goto out;
     }
 
-    // "Send" ciphertext to server
-    memcpy(server_ctx.ciphertext, client_ctx.ciphertext, mlkem768_get_ciphertext_len());
-
-    ESP_LOGI(TAG, "Server decapsulating shared secret from received ciphertext");
-    if (mlkem768_decaps(&server_ctx, server_ctx.ciphertext) != 0) {
-        ESP_LOGE(TAG, "Server decapsulation failed");
-        goto cleanup;
+    ESP_LOGI(TAG, "Server waiting for ciphertext from client");
+    uint32_t ct_len = 0;
+    if (recv_with_len(sock, ctx.ciphertext, mlkem768_get_ciphertext_len(), &ct_len) != 0) {
+        ESP_LOGE(TAG, "Failed to receive ciphertext");
+        goto out;
     }
 
-    // Verify both sides derived the same shared secret
-    size_t ss_len = mlkem768_get_shared_secret_len();
-    if (memcmp(server_ctx.shared_secret, client_ctx.shared_secret, ss_len) != 0) {
-        ESP_LOGE(TAG, "Shared secrets DO NOT match!");
-        goto cleanup;
-    }
-    ESP_LOGI(TAG, "Shared secret established successfully (%d bytes)", (int)ss_len);
-
-    // Derive AES-256 keys on both sides via HKDF
-    uint8_t server_aes_key[AES_GCM_KEY_SIZE];
-    uint8_t client_aes_key[AES_GCM_KEY_SIZE];
-
-    if (derive_aes_key(server_ctx.shared_secret, ss_len,
-                       server_aes_key, sizeof(server_aes_key)) != 0 ||
-        derive_aes_key(client_ctx.shared_secret, ss_len,
-                       client_aes_key, sizeof(client_aes_key)) != 0) {
-        ESP_LOGE(TAG, "HKDF key derivation failed");
-        goto cleanup;
+    if (ct_len != mlkem768_get_ciphertext_len()) {
+        ESP_LOGE(TAG, "Unexpected ciphertext length %u", (unsigned)ct_len);
+        goto out;
     }
 
-    if (memcmp(server_aes_key, client_aes_key, AES_GCM_KEY_SIZE) != 0) {
-        ESP_LOGE(TAG, "Derived AES keys DO NOT match!");
-        goto cleanup;
-    }
-    ESP_LOGI(TAG, "AES-256-GCM key derived successfully on both sides");
-
-    // Simulate encrypted data channel with sequence-number AAD
-    uint32_t server_seq = 0;
-    uint32_t client_seq = 0;
-
-    const char *server_msg = "Hello from server over PQC channel\n";
-    uint8_t server_aad[4];
-    encode_sequence_aad(server_seq, server_aad);
-
-    uint8_t encrypted_from_server[256];
-    size_t encrypted_from_server_len = 0;
-
-    if (aes_gcm_encrypt(server_aes_key,
-                        server_aad, sizeof(server_aad),
-                        (const uint8_t *)server_msg, strlen(server_msg),
-                        encrypted_from_server, &encrypted_from_server_len) != 0) {
-        ESP_LOGE(TAG, "Server AES-GCM encryption failed");
-        goto cleanup;
+    if (mlkem768_decaps(&ctx, ctx.ciphertext) != 0) {
+        ESP_LOGE(TAG, "mlkem768_decaps (server) failed");
+        goto out;
     }
 
-    ESP_LOGI(TAG, "Server -> Client: encrypted message length = %d bytes",
-             (int)encrypted_from_server_len);
-
-    // Client decrypts using its key and expected sequence number
-    uint8_t client_aad[4];
-    encode_sequence_aad(client_seq, client_aad);
-
-    uint8_t decrypted_on_client[256];
-    size_t decrypted_on_client_len = 0;
-
-    if (aes_gcm_decrypt(client_aes_key,
-                        client_aad, sizeof(client_aad),
-                        encrypted_from_server, encrypted_from_server_len,
-                        decrypted_on_client, &decrypted_on_client_len) != 0) {
-        ESP_LOGE(TAG, "Client AES-GCM decryption failed");
-        goto cleanup;
+    if (derive_aes_key(ctx.shared_secret,
+                       mlkem768_get_shared_secret_len(),
+                       aes_key, AES_GCM_KEY_SIZE) != 0) {
+        ESP_LOGE(TAG, "Server HKDF key derivation failed");
+        goto out;
     }
 
-    decrypted_on_client[decrypted_on_client_len] = '\0';
-    ESP_LOGI(TAG, "Client received: %s", (char *)decrypted_on_client);
+    ESP_LOGI(TAG, "Server handshake complete, AES key derived");
+    ret = 0;
 
-    // Bump sequence numbers as in real protocol
-    server_seq++;
-    client_seq++;
-
-    // Optional: Client -> Server message using same channel
-    const char *client_msg = "Hello back from client over PQC channel\n";
-    encode_sequence_aad(client_seq, client_aad);
-
-    uint8_t encrypted_from_client[256];
-    size_t encrypted_from_client_len = 0;
-
-    if (aes_gcm_encrypt(client_aes_key,
-                        client_aad, sizeof(client_aad),
-                        (const uint8_t *)client_msg, strlen(client_msg),
-                        encrypted_from_client, &encrypted_from_client_len) != 0) {
-        ESP_LOGE(TAG, "Client AES-GCM encryption failed");
-        goto cleanup;
-    }
-
-    ESP_LOGI(TAG, "Client -> Server: encrypted message length = %d bytes",
-             (int)encrypted_from_client_len);
-
-    uint8_t server_aad2[4];
-    encode_sequence_aad(server_seq, server_aad2);
-
-    uint8_t decrypted_on_server[256];
-    size_t decrypted_on_server_len = 0;
-
-    if (aes_gcm_decrypt(server_aes_key,
-                        server_aad2, sizeof(server_aad2),
-                        encrypted_from_client, encrypted_from_client_len,
-                        decrypted_on_server, &decrypted_on_server_len) != 0) {
-        ESP_LOGE(TAG, "Server AES-GCM decryption failed");
-        goto cleanup;
-    }
-
-    decrypted_on_server[decrypted_on_server_len] = '\0';
-    ESP_LOGI(TAG, "Server received: %s", (char *)decrypted_on_server);
-
-    ESP_LOGI(TAG, "Dedicated secure channel demo completed successfully");
-
-cleanup:
-    mlkem768_cleanup(&client_ctx);
-    mlkem768_cleanup(&server_ctx);
+out:
+    mlkem768_cleanup(&ctx);
+    return ret;
 }
+
+static int pqc_client_handshake(int sock, uint8_t aes_key[AES_GCM_KEY_SIZE])
+{
+    mlkem768_ctx_t ctx = {0};
+    int ret = -1;
+
+    if (mlkem768_init(&ctx) != 0) {
+        ESP_LOGE(TAG, "mlkem768_init (client) failed");
+        return -1;
+    }
+
+    ESP_LOGI(TAG, "Client waiting for server public key...");
+    uint32_t pk_len = 0;
+    if (recv_with_len(sock, ctx.public_key, mlkem768_get_public_key_len(), &pk_len) != 0) {
+        ESP_LOGE(TAG, "Failed to receive public key");
+        goto out;
+    }
+
+    if (pk_len != mlkem768_get_public_key_len()) {
+        ESP_LOGE(TAG, "Unexpected public key length %u", (unsigned)pk_len);
+        goto out;
+    }
+
+    if (mlkem768_encaps(&ctx, ctx.public_key) != 0) {
+        ESP_LOGE(TAG, "mlkem768_encaps (client) failed");
+        goto out;
+    }
+
+    uint32_t ct_len = (uint32_t)mlkem768_get_ciphertext_len();
+    if (send_with_len(sock, ctx.ciphertext, ct_len) != 0) {
+        ESP_LOGE(TAG, "Failed to send ciphertext");
+        goto out;
+    }
+
+    if (derive_aes_key(ctx.shared_secret,
+                       mlkem768_get_shared_secret_len(),
+                       aes_key, AES_GCM_KEY_SIZE) != 0) {
+        ESP_LOGE(TAG, "Client HKDF key derivation failed");
+        goto out;
+    }
+
+    ESP_LOGI(TAG, "Client handshake complete, AES key derived");
+    ret = 0;
+
+out:
+    mlkem768_cleanup(&ctx);
+    return ret;
+}
+
+// Demo roles
+static void run_server_side(void)
+{
+    ESP_LOGI(TAG, "=== Demo: Dedicated Secure Channel (SERVER) ===");
+
+    int sock = setup_server_connection();
+    if (sock < 0) {
+        ESP_LOGE(TAG, "Failed to set up server connection");
+        return;
+    }
+
+    uint8_t aes_key[AES_GCM_KEY_SIZE];
+    if (pqc_server_handshake(sock, aes_key) != 0) {
+        ESP_LOGE(TAG, "Server handshake failed");
+        close(sock);
+        return;
+    }
+
+    // Send a single encrypted welcome message
+    const char *welcome = "Welcome from ML-KEM server over AES-GCM channel\n";
+    uint8_t aad[4];
+    uint32_t seq = 0;
+    encode_sequence_aad(seq, aad);
+
+    uint8_t enc_buf[256];
+    size_t enc_len = 0;
+
+    if (aes_gcm_encrypt(aes_key,
+                        aad, sizeof(aad),
+                        (const uint8_t *)welcome, strlen(welcome),
+                        enc_buf, &enc_len) != 0) {
+        ESP_LOGE(TAG, "Server AES-GCM encryption failed");
+        close(sock);
+        return;
+    }
+
+    if (send_with_len(sock, enc_buf, (uint32_t)enc_len) != 0) {
+        ESP_LOGE(TAG, "Failed to send encrypted welcome message");
+        close(sock);
+        return;
+    }
+
+    ESP_LOGI(TAG, "Sent encrypted welcome message (%d bytes)", (int)enc_len);
+    close(sock);
+}
+
+static void run_client_side(void)
+{
+    ESP_LOGI(TAG, "=== Demo: Dedicated Secure Channel (CLIENT) ===");
+
+    int sock = setup_client_connection();
+    if (sock < 0) {
+        ESP_LOGE(TAG, "Failed to set up client connection");
+        return;
+    }
+
+    uint8_t aes_key[AES_GCM_KEY_SIZE];
+    if (pqc_client_handshake(sock, aes_key) != 0) {
+        ESP_LOGE(TAG, "Client handshake failed");
+        close(sock);
+        return;
+    }
+
+    // Receive and decrypt the welcome message
+    uint8_t enc_buf[256];
+    uint32_t enc_len = 0;
+    if (recv_with_len(sock, enc_buf, sizeof(enc_buf), &enc_len) != 0) {
+        ESP_LOGE(TAG, "Failed to receive encrypted welcome message");
+        close(sock);
+        return;
+    }
+
+    uint8_t aad[4];
+    uint32_t expected_seq = 0;
+    encode_sequence_aad(expected_seq, aad);
+
+    uint8_t plain_buf[256];
+    size_t plain_len = 0;
+    if (aes_gcm_decrypt(aes_key,
+                        aad, sizeof(aad),
+                        enc_buf, enc_len,
+                        plain_buf, &plain_len) != 0) {
+        ESP_LOGE(TAG, "Client AES-GCM decryption failed");
+        close(sock);
+        return;
+    }
+
+    plain_buf[plain_len] = '\0';
+    ESP_LOGI(TAG, "Decrypted welcome: %s", (char *)plain_buf);
+
+    close(sock);
+}
+
+#include "nvs_flash.h"
+#include "esp_event.h"
+#include "esp_log.h"
+#include "protocol_examples_common.h"
+
 
 void app_main(void)
 {
-    run_pqc_channel_demo();
+    ESP_ERROR_CHECK(nvs_flash_init());
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    ESP_ERROR_CHECK(example_connect());
+
+#if CONFIG_SERVER_SIDE
+    run_server_side();
+#else
+    run_client_side();
+#endif
 }

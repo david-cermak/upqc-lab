@@ -1,7 +1,6 @@
-# This file was generated using idf.py save-defconfig. It can be edited manually.
-# Espressif IoT Development Framework (ESP-IDF) 6.0.0 Project Minimal Configuration
-#
-CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=32768
 CONFIG_MBEDTLS_HKDF_C=y
 CONFIG_MBEDTLS_AES_C=y
 CONFIG_MBEDTLS_GCM_C=y
+CONFIG_MBEDTLS_SSL_PROTO_TLS1_3=y
+CONFIG_MBEDTLS_UPQC_ENABLE_HYBRID_11EC=y
