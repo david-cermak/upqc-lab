@@ -16,3 +16,6 @@
 [submodule "impl/idf"]
 	path = impl/idf
 	url = https://github.com/david-cermak/esp-idf.git
+[submodule "impl/ml-kem"]
+	path = impl/ml-kem
+	url = https://github.com/david-cermak/ml-kem.git

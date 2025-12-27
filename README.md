@@ -75,6 +75,60 @@ The PQC market is experiencing explosive growth, valued at $297.82 million in 20
 
 The window for proactive migration is narrowing - with quantum computers potentially arriving in the early 2030s, organizations must act decisively to protect their digital infrastructure against future quantum threats.
 
+## ESP32 ML-KEM-768 Performance Comparison
+
+The repository includes a performance test suite that supports two ML-KEM-768 implementations on ESP32, allowing direct comparison of different library approaches:
+
+### Implementation Comparison
+
+| Metric | liboqs-based | ml-kem C++20 | Difference |
+|--------|--------------|--------------|------------|
+| **Init** | 209 μs (0.209 ms) | 139 μs (0.139 ms) | ml-kem 33% faster |
+| **Keypair** | 17,606 μs (17.606 ms) | 23,731 μs (23.731 ms) | liboqs 26% faster |
+| **Encaps** | 19,874 μs (19.874 ms) | 27,740 μs (27.740 ms) | liboqs 28% faster |
+| **Decaps** | 22,795 μs (22.795 ms) | 31,098 μs (31.098 ms) | liboqs 27% faster |
+| **Cleanup** | 41 μs (0.041 ms) | 52 μs (0.052 ms) | liboqs 21% faster |
+| **Total** | **85,340 μs (85.340 ms)** | **101,638 μs (101.638 ms)** | **liboqs 16% faster** |
+| **Stack Used** | 15,208 bytes | 30,168 bytes | ml-kem uses 2x more |
+| **Heap Peak** | ~4.9 KB | ~9.7 KB | ml-kem uses 2x more |
+
+### Key Observations
+
+**liboqs-based Implementation:**
+- ✅ **Faster overall**: 16% faster total execution time
+- ✅ **Lower memory footprint**: Uses half the stack and heap compared to ml-kem
+- ✅ **Mature and optimized**: Well-tested production library with platform-specific optimizations
+- ✅ **Better for embedded**: Lower resource usage makes it more suitable for constrained devices
+
+**ml-kem C++20 Implementation:**
+- ✅ **Faster initialization**: 33% faster context setup
+- ✅ **Header-only**: No separate library build required, easier integration
+- ✅ **Modern C++20**: Leverages constexpr and compile-time optimizations
+- ⚠️ **Higher memory usage**: Requires approximately 2x stack and heap
+- ⚠️ **Slower operations**: 26-28% slower for keypair, encaps, and decaps operations
+
+### Test Environment
+- **Chip**: ESP32-D0WD (revision v1.0)
+- **CPU Frequency**: 160 MHz
+- **ESP-IDF Version**: v6.1
+- **Stack Size**: 65,536 bytes (test task)
+
+### Running the Performance Test
+
+The performance test supports both implementations via a CMake option:
+
+```bash
+# Test with liboqs (default)
+cd components/liboqs_mlkem/tests/performance
+idf.py build flash monitor
+
+# Test with ml-kem C++20 library
+cd components/liboqs_mlkem/tests/performance
+idf.py -DUSE_ML_KEM_LIBRARY=ON build flash monitor
+```
+
+See `components/liboqs_mlkem/tests/performance/README.md` for detailed documentation.
+
 ## Host Example & Crypto Backends
 
 A minimal TCP client/server demonstrating ML-KEM-512 + AES-256-GCM lives in `examples/host` (see its README for details). It uses liboqs for KEM and supports OpenSSL or mbedTLS for HKDF and AEAD (AES-GCM).
