@@ -81,10 +81,30 @@ The ML-KEM-768 component uses exclusively flash memory (no DRAM or IRAM):
 
 ## Building and Running
 
+### Using the Original liboqs Implementation (Default)
+
 ```bash
 cd components/liboqs_mlkem/tests/performance
 idf.py build flash monitor
 ```
 
+### Using the ml-kem C++20 Library
+
+To use the C++20 ml-kem library implementation instead of liboqs:
+
+```bash
+cd components/liboqs_mlkem/tests/performance
+idf.py -DUSE_ML_KEM_LIBRARY=ON build flash monitor
+```
+
 The test will execute automatically on startup and print the performance metrics to the serial console.
+
+## Implementation Selection
+
+The performance test supports two ML-KEM-768 implementations:
+
+1. **liboqs-based** (default): The original implementation using the Open Quantum Safe library
+2. **ml-kem C++20**: A header-only C++20 implementation from `impl/ml-kem`
+
+The selection is controlled by the `USE_ML_KEM_LIBRARY` CMake option. When enabled, a C++ wrapper layer (`mlkem768_mlkem.cpp`) provides the same C API interface, allowing the same test code to work with both implementations without any `#ifdef` directives in the test code itself.
 

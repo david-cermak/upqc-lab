@@ -1,5 +1,14 @@
 #include <stdio.h>
+
+// Select implementation via preprocessor macro
+// Define USE_ML_KEM_LIBRARY to use the C++20 ml-kem library
+// Otherwise, use the original liboqs-based implementation
+#ifdef USE_ML_KEM_LIBRARY
+#include "mlkem768_mlkem.h"
+#else
 #include "mlkem768.h"
+#endif
+
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_system.h"
@@ -7,7 +16,7 @@
 #include "freertos/task.h"
 
 #define TAG "performance"
-#define TASK_STACK_SIZE 16384  // Large enough stack for the operations
+#define TASK_STACK_SIZE 4*16384  // Large enough stack for the operations
 
 // Performance metrics structure
 typedef struct {
